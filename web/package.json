@@ -1,0 +1,35 @@
+{
+  "name": "trade-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@tanstack/react-query": "5.51.1",
+    "lightweight-charts": "4.2.0",
+    "recharts": "2.12.7",
+    "clsx": "2.1.1"
+  },
+  "devDependencies": {
+    "typescript": "5.5.3",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "@types/node": "20.14.10",
+    "tailwindcss": "3.4.6",
+    "postcss": "8.4.39",
+    "autoprefixer": "10.4.19",
+    "vitest": "2.0.3",
+    "@testing-library/react": "16.0.0",
+    "@testing-library/jest-dom": "6.4.6",
+    "jsdom": "24.1.0",
+    "@vitejs/plugin-react": "4.3.1"
+  }
+}
