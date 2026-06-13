@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import logging
 import queue
 import sqlite3
 import threading
@@ -72,7 +73,7 @@ class SqliteStore:
                 try:
                     self._conn.execute(sql, params)
                     self._conn.commit()
-                except BaseException as e:  # noqa: BLE001
+                except sqlite3.Error as e:
                     self.last_error = e
                     # 回滚以释放写锁
                     try:
@@ -136,9 +137,18 @@ class SqliteStore:
         return done.wait(timeout=timeout)
 
     def stop(self) -> None:
-        """停止写线程并关闭连接。幂等。"""
+        """停止写线程并关闭连接。幂等。
+
+        停机前先 drain 队列：flush 等待此前所有 exec commit 完成后再关闭连接，
+        避免队列中未消费的写被 conn.close() 丢弃。flush 超时仅记日志不阻塞关闭。
+        """
         if self._stop.is_set():
             return
+        if not self.flush(timeout=5.0):
+            # drain 超时：未消费写可能丢失，记日志但不死等
+            logging.getLogger(__name__).warning(
+                "SqliteStore.stop drain 超时，队列未清空即关闭，可能有写丢失"
+            )
         self._stop.set()
         try:
             self._q.put_nowait(("stop", None, None, None))

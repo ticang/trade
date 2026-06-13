@@ -148,3 +148,80 @@ def test_create_sqlite_compatibility(store):
     """store 用的连接应能被 schema.create_sqlite 幂等再次应用。"""
     # 不抛即通过（IF NOT EXISTS 幂等）
     schema.create_sqlite(store._conn)
+
+
+def test_stop_drains_pending_writes(tmp_path):
+    """stop 必须先 drain 队列：投 N 条写（不 flush）后直接 stop，
+    重新打开数据库断言 N 条全在（验证停机不丢写）。
+
+    回归：旧实现 stop 直接 close 连接，队列里未消费的 exec 被丢弃。
+    """
+    db_path = tmp_path / "drain.db"
+    s = SqliteStore(str(db_path))
+    s.start()
+
+    n = 50
+    # 故意不 flush，制造队列积压
+    for i in range(n):
+        s.execute(_INSERT_ACCOUNT, (f"acct-drain-{i}", "xtp", "paper", f"drain-{i}"))
+    s.stop()  # 停机应 drain 队列，而非丢弃
+
+    # 重新打开同一数据库文件验证持久化
+    s2 = SqliteStore(str(db_path))
+    s2.start()
+    try:
+        assert s2.flush(timeout=5.0)
+        row = s2.query_one("SELECT COUNT(*) AS c FROM account")
+        assert row["c"] == n, f"停机丢写：期望 {n} 条，实际 {row['c']} 条"
+    finally:
+        s2.stop()
+
+
+def test_concurrent_reads_during_writes(store):
+    """一个写线程持续插入，多个读线程并发 query_all。
+
+    断言：无异常 + 每个读线程观察到的行数单调非减（WAL 快照一致性）+ flush 后最终行数正确。
+    """
+    total = 100
+    write_done = threading.Event()
+    errors: list[Exception] = []
+
+    def writer():
+        try:
+            for i in range(total):
+                store.execute(
+                    _INSERT_ACCOUNT, (f"acct-crw-{i}", "xtp", "paper", f"crw-{i}")
+                )
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+        finally:
+            write_done.set()
+
+    def reader(samples: list[int]):
+        try:
+            last = -1
+            while not write_done.is_set():
+                rows = store.query_all("SELECT account_id FROM account")
+                count = len(rows)
+                # WAL 快照：读到的行数不应回退
+                assert count >= last, f"行数回退：{last} -> {count}"
+                last = count
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    samples: list[int] = []
+    readers = [
+        threading.Thread(target=reader, args=(samples,)) for _ in range(4)
+    ]
+    wt = threading.Thread(target=writer)
+    for t in readers:
+        t.start()
+    wt.start()
+    wt.join(timeout=10)
+    for t in readers:
+        t.join(timeout=10)
+
+    assert not errors, f"并发读写抛错: {errors}"
+    assert store.flush(timeout=10)
+    row = store.query_one("SELECT COUNT(*) AS c FROM account")
+    assert row["c"] == total
