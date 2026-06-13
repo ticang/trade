@@ -23,7 +23,7 @@ export function AttributionBars({ attribution }: Props) {
             <span className="w-40 shrink-0 truncate text-caption text-muted" title={factor}>
               {factor}
             </span>
-            <div className="h-[10px] flex-1 overflow-hidden rounded-sm bg-hairline-on-dark/30">
+            <div className="h-[10px] flex-1 overflow-hidden rounded-sm bg-surface-elevated-dark/50">
               <div
                 data-testid="attribution-bar"
                 style={{ width: `${Math.max(widthPct, 2)}%` }}
