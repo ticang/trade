@@ -1,3 +1,4 @@
+// Color tokens mirror tailwind.config.ts (source of truth); this file exposes raw hex for chart/inline-style use. If a DESIGN.md color changes, update BOTH.
 // DESIGN.md tokens as TS constants (for chart configs, inline styles outside Tailwind).
 export const theme = {
   colors: {

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { createChart, ColorType, IChartApi } from "lightweight-charts";
+import { createChart, ColorType } from "lightweight-charts";
 import { Bar, ReplaySignal } from "@/types/domain";
 import { theme } from "@/lib/theme";
 
@@ -11,7 +11,6 @@ interface Props {
 
 export function KlineChart({ bars, signals = [] }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -21,7 +20,6 @@ export function KlineChart({ bars, signals = [] }: Props) {
       width: ref.current.clientWidth,
       height: 360,
     });
-    chartRef.current = chart;
 
     const candle = chart.addCandlestickSeries({
       upColor: theme.colors.tradingUp,
