@@ -1,10 +1,8 @@
-from dataclasses import dataclass
-
 from quant.events import BarEvent, EventBus
 
 
-def test_bar_event_is_dataclass():
-    # BarEvent 必须是 dataclass，字段 symbol/freq/ts/close/volume
+def test_bar_event_has_fields():
+    # BarEvent 字段 symbol/freq/ts/close/volume
     ev = BarEvent(symbol="600519", freq="1d", ts=__import__("datetime").datetime(2024, 1, 1), close=1800.0, volume=10000)
     assert ev.symbol == "600519"
     assert ev.freq == "1d"

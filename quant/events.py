@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, TypeVar
@@ -30,5 +31,5 @@ class EventBus:
             try:
                 cb(event)
             except Exception:
-                # 订阅者异常不影响其他订阅者，吞掉避免外抛
-                pass
+                # 订阅者异常不影响其他订阅者，仅记日志避免外抛
+                logging.getLogger(__name__).exception("event subscriber raised")
