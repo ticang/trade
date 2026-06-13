@@ -28,7 +28,7 @@ describe("OrderForm", () => {
     fireEvent.change(screen.getByLabelText(/数量/), { target: { value: "100" } });
 
     const preview = screen.getByTestId("order-preview-amount");
-    expect(preview.textContent).toBe("168500");
+    expect(preview.textContent).toBe("168,500");
     expect(preview.className).toContain("font-number");
 
     fireEvent.click(screen.getByRole("button", { name: /买入/ }));

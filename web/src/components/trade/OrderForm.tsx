@@ -26,7 +26,7 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
   };
 
   const submit = () => {
-    if (price <= 0 || qty <= 0) return;
+    if (!(price > 0) || !(qty > 0)) return;
     onSubmit({ side, price, qty });
   };
 
@@ -72,7 +72,10 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
           type="number"
           aria-label="价格"
           value={price === 0 ? "" : price}
-          onChange={(e) => setPrice(Number(e.target.value))}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setPrice(Number.isNaN(v) ? 0 : v);
+          }}
           className="bg-surface-card-dark text-on-dark rounded-md px-sm py-2 font-number text-number-md outline-none ring-1 ring-hairline-ondark focus:ring-trading-up"
         />
       </label>
@@ -83,7 +86,10 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
           type="number"
           aria-label="数量"
           value={qty === 0 ? "" : qty}
-          onChange={(e) => setQty(Number(e.target.value))}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setQty(Number.isNaN(v) ? 0 : v);
+          }}
           className="bg-surface-card-dark text-on-dark rounded-md px-sm py-2 font-number text-number-md outline-none ring-1 ring-hairline-ondark focus:ring-trading-up"
         />
       </label>
@@ -104,7 +110,7 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
       <div className="flex items-center justify-between border-t border-hairline-ondark pt-sm">
         <span className="text-caption text-muted">预估金额</span>
         <span data-testid="order-preview-amount" className="font-number text-number-md text-on-dark">
-          {amount}
+          {amount.toLocaleString()}
         </span>
       </div>
 
