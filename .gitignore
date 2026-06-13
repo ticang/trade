@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Node / Next.js
+node_modules/
+.next/
+web/tsconfig.tsbuildinfo
+
+# Office 临时锁文件
+~$*
+
+# 参考资料（外部输入，不入库）
+资料.docx
