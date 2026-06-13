@@ -1,0 +1,73 @@
+import { Order } from "@/types/trade";
+
+// Deterministic sample orders covering all OrderStatus values across accounts.
+export function mockOrders(): Order[] {
+  return [
+    {
+      order_id: "ord-1001",
+      account_id: "acct1",
+      symbol: "600519",
+      side: "buy",
+      price: 1680,
+      qty: 100,
+      filled_qty: 100,
+      status: "filled",
+      ts: 1718300000000,
+    },
+    {
+      order_id: "ord-1002",
+      account_id: "acct1",
+      symbol: "300750",
+      side: "sell",
+      price: 185,
+      qty: 200,
+      filled_qty: 80,
+      status: "partial_filled",
+      ts: 1718303600000,
+    },
+    {
+      order_id: "ord-1003",
+      account_id: "acct2",
+      symbol: "002594",
+      side: "buy",
+      price: 245,
+      qty: 300,
+      filled_qty: 0,
+      status: "submitted",
+      ts: 1718307200000,
+    },
+    {
+      order_id: "ord-1004",
+      account_id: "acct1",
+      symbol: "000001",
+      side: "sell",
+      price: 11.6,
+      qty: 1000,
+      filled_qty: 0,
+      status: "pending",
+      ts: 1718310800000,
+    },
+    {
+      order_id: "ord-1005",
+      account_id: "acct2",
+      symbol: "600036",
+      side: "buy",
+      price: 38.5,
+      qty: 500,
+      filled_qty: 0,
+      status: "cancelled",
+      ts: 1718314400000,
+    },
+    {
+      order_id: "ord-1006",
+      account_id: "acct1",
+      symbol: "688981",
+      side: "buy",
+      price: 90,
+      qty: 200,
+      filled_qty: 0,
+      status: "rejected",
+      ts: 1718318000000,
+    },
+  ];
+}
