@@ -1,4 +1,3 @@
-import { clsx } from "clsx";
 import { PriceCell } from "@/components/ui/PriceCell";
 import { Position } from "@/types/monitor";
 

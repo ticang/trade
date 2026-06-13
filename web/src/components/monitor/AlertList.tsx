@@ -29,17 +29,17 @@ function relativeTime(ts: number): string {
 }
 
 export function AlertList({ alerts }: AlertListProps) {
-  // Feed is already newest-first; preserve order.
+  const sorted = [...alerts].sort((a, b) => b.ts - a.ts);
   return (
     <Card variant="surface-dark" className="p-lg">
       <div className="pb-sm border-b border-hairline-ondark text-title-sm">
         告警
       </div>
-      {alerts.length === 0 ? (
+      {sorted.length === 0 ? (
         <div className="py-md text-caption text-muted">暂无告警</div>
       ) : (
         <div className="flex flex-col">
-          {alerts.map((a, idx) => (
+          {sorted.map((a, idx) => (
             <div
               key={`${a.ts}-${idx}`}
               data-level={a.level}

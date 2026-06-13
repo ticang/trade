@@ -22,8 +22,6 @@ export function PnlOverview() {
   const rows = positions.data ?? [];
   const totalAssets = rows.reduce((sum, p) => sum + p.market_value, 0);
   const dailyPnl = rows.reduce((sum, p) => sum + p.pnl, 0);
-  // Cumulative P&L is a mocked positive snapshot (no historical cost basis in mock).
-  const cumulativePnl = 28640;
   const activeStrategies = (strategies.data ?? []).filter((s) =>
     ACTIVE_STATUS.has(s.status),
   ).length;
@@ -36,11 +34,10 @@ export function PnlOverview() {
         value={`¥${signed(Math.round(dailyPnl))}`}
         direction={directionOf(dailyPnl)}
       />
-      <StatCard
-        label="累计盈亏"
-        value={`¥${signed(cumulativePnl)}`}
-        direction="up"
-      />
+      <div>
+        <StatCard label="累计盈亏" value="—" direction="flat" />
+        <div className="pt-xs text-caption text-muted">数据待接入</div>
+      </div>
       <StatCard label="运行策略数" value={String(activeStrategies)} direction="flat" />
     </div>
   );
