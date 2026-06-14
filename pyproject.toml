@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "cvxpy>=1.4",
     "openai>=1.0",
+    "arch>=6.0",
 ]
 
 [project.optional-dependencies]
