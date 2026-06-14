@@ -1,0 +1,178 @@
+"""交易规则 Provider：按 symbol + 决策时刻查询生效中的交易规则。
+
+设计 v0.5 §4.1.3/§6：
+- classify_symbol：symbol→(market,board,product_type) 简化映射（M0，M0.5 完善）
+- rules_for：按 effective_from <= decision_time < effective_to 命中区间行，
+  反序列化 rule_json 装 TradingRule 返回；无命中返回 None
+- check_no_overlap：校验同 (market,board,product_type) 区间不重叠
+  （M0 预留，M0.5 录入 trading_rule 前调用）
+"""
+from __future__ import annotations
+
+import datetime
+import sqlite3
+from typing import Optional, Sequence
+
+from quant.data.models import TradingRule
+from quant.data.sqlite_store import SqliteStore
+
+
+def classify_symbol(symbol: str) -> tuple[str, str, str]:
+    """symbol→(market,board,product_type) 简化映射。
+
+    A 股前缀规则（M0 简化，M0.5 完善）：
+    - 688xxx→(SSE,star,stock)  科创板
+    - 6xxxxx→(SSE,main,stock)  沪市主板
+    - 30xxxx→(SZSE,chinext,stock)  创业板
+    - 00xxxx→(SZSE,main,stock)  深市主板
+    - 8xxxxx/9xxxxx→(BSE,main,stock)  北交所
+    - 以 5 开头→(ETF,etp,fund)  基金（简化）
+    - 其他→(SSE,main,stock)  默认
+    """
+    s = symbol.strip()
+    if s.startswith("688"):
+        return ("SSE", "star", "stock")
+    if s.startswith("6"):
+        return ("SSE", "main", "stock")
+    if s.startswith("30"):
+        return ("SZSE", "chinext", "stock")
+    if s.startswith("00"):
+        return ("SZSE", "main", "stock")
+    if s.startswith("8") or s.startswith("9"):
+        return ("BSE", "main", "stock")
+    if s.startswith("5"):
+        return ("ETF", "etp", "fund")
+    return ("SSE", "main", "stock")
+
+
+class TradingRuleProvider:
+    """交易规则查询：依据 symbol 分类后按生效区间命中规则。"""
+
+    def __init__(self, store: SqliteStore) -> None:
+        self._store = store
+
+    def rules_for(
+        self, symbol: str, decision_time: datetime.date | datetime.datetime
+    ) -> Optional[TradingRule]:
+        """查 symbol 在 decision_time 生效中的交易规则。
+
+        decision_time 可 date 或 datetime，统一取其 date 部分。
+        命中条件：market/board/product_type 三元匹配 且
+        effective_from <= decision_time < effective_to（effective_to 为 NULL 视为永不过期）。
+        期望至多 1 行命中；多行取 effective_from 最大那条。
+        无命中返回 None。
+        """
+        d = (
+            decision_time.date()
+            if isinstance(decision_time, datetime.datetime)
+            else decision_time
+        )
+        market, board, product_type = classify_symbol(symbol)
+        ds = d.isoformat()
+
+        # 区间右开：effective_from <= d AND (effective_to IS NULL OR effective_to > d)
+        rows = self._store.query_all(
+            "SELECT rule_id, market, board, product_type, "
+            "effective_from, effective_to, source_url, source_confidence, "
+            "rule_json, reviewed_by, reviewed_ts "
+            "FROM trading_rule "
+            "WHERE market = ? AND board = ? AND product_type = ? "
+            "AND effective_from <= ? "
+            "AND (effective_to IS NULL OR effective_to > ?) "
+            "ORDER BY effective_from DESC",
+            (market, board, product_type, ds, ds),
+        )
+        if not rows:
+            return None
+
+        row = rows[0]
+        return _row_to_rule(row)
+
+    def check_no_overlap(
+        self, rows: Sequence[sqlite3.Row]
+    ) -> list[str]:
+        """校验给定规则行区间不重叠。
+
+        同 (market,board,product_type) 内任意两条规则的
+        [effective_from, effective_to) 不得相交（effective_to 为 NULL 视为 +∞）。
+        返回冲突描述列表，空列表表示无冲突。
+
+        M0 预留：M0.5 录入 trading_rule 前调用以应用层校验不重叠约束。
+        """
+        # 按 (market,board,product_type) 分组
+        groups: dict[tuple[str, str, str], list[sqlite3.Row]] = {}
+        for r in rows:
+            key = (
+                r["market"],
+                _norm(r["board"]),
+                _norm(r["product_type"]),
+            )
+            groups.setdefault(key, []).append(r)
+
+        conflicts: list[str] = []
+        for key, group in groups.items():
+            group.sort(key=lambda r: r["effective_from"])
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    msg = _overlap_desc(key, group[i], group[j])
+                    if msg:
+                        conflicts.append(msg)
+        return conflicts
+
+
+def _norm(v: object) -> str:
+    """分组键归一：None→空串，便于按三元组聚类。"""
+    return "" if v is None else str(v)
+
+
+def _parse_date(v: object) -> datetime.date:
+    """解析 SQLite DATE 列（可能为 'YYYY-MM-DD' 字符串或 date）。"""
+    if isinstance(v, datetime.date) and not isinstance(v, datetime.datetime):
+        return v
+    if isinstance(v, datetime.datetime):
+        return v.date()
+    return datetime.date.fromisoformat(str(v))
+
+
+def _overlap_desc(
+    key: tuple[str, str, str], a: sqlite3.Row, b: sqlite3.Row
+) -> Optional[str]:
+    """判断 a、b 区间是否相交，相交则返回描述串。
+
+    区间右开 [from, to)；to 为 NULL 视为 +∞。
+    排序后 a.from <= b.from，不相交当且仅当 a.to 存在且 a.to <= b.from。
+    """
+    a_from = _parse_date(a["effective_from"])
+    a_to_raw = a["effective_to"]
+    b_from = _parse_date(b["effective_from"])
+    b_to_raw = b["effective_to"]
+
+    # a 排前，不相交条件：a.to 非空且 a.to <= b.from
+    disjoint = a_to_raw is not None and _parse_date(a_to_raw) <= b_from
+    if disjoint:
+        return None
+    market, board, product_type = key
+    return (
+        f"区间相交: ({market}/{board}/{product_type}) "
+        f"规则 {a['rule_id']} [{a_from}, {a_to_raw}) "
+        f"与 规则 {b['rule_id']} [{b_from}, {b_to_raw})"
+    )
+
+
+def _row_to_rule(row: sqlite3.Row) -> TradingRule:
+    """从查询行构造 TradingRule；rule_json 保持原始字符串。"""
+    return TradingRule(
+        rule_id=row["rule_id"],
+        market=row["market"],
+        board=row["board"],
+        product_type=row["product_type"],
+        effective_from=_parse_date(row["effective_from"]),
+        effective_to=(
+            _parse_date(row["effective_to"]) if row["effective_to"] is not None else None
+        ),
+        source_url=row["source_url"],
+        source_confidence=row["source_confidence"],
+        rule_json=row["rule_json"],
+        reviewed_by=row["reviewed_by"],
+        reviewed_ts=row["reviewed_ts"],
+    )
