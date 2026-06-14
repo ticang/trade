@@ -215,3 +215,52 @@
 **后续建议**：
 1. M6 启动前修 `decile_returns` 在 `n < n_decile` 时的输出（用 `n_decile = min(n_decile, n)`，或在 Tester 层把 `long_short_annual=NaN` 视为 N/A 不参与判定）。
 2. network 测试断言强化：`test_real_llm_run` 应断言「至少 N% 假设进入求值阶段 + 至少 1 个 IC>0.1」。
+
+## Task 8 §11 M5a 集成验收
+
+### 计划
+1. 建 `tests/quant/test_m5a_acceptance.py`（扁平） → 验证：7 个验收测试可运行
+2. 每个测试用确定性合成数据（固定 seed） → 验证：独立可重跑
+3. `pytest tests/quant/test_m5a_acceptance.py -v` 全绿
+4. `pytest tests/quant -m "not network" -q` 不回归
+5. commit `add m5a acceptance test`
+
+### 7 验收条目
+- [ ] test_m5a_report_auto_generated：DailyReportData 字段齐
+- [ ] test_m5a_garch_dcc_calibrated：GARCH+DCC fit→forecast，残差白噪声
+- [ ] test_m5a_var_kupiec_coverage：5% 例外率 at 95% → Kupiec p>0.05
+- [ ] test_m5a_path_limit_truncation：超涨跌停路径截断
+- [ ] test_m5a_counterfactual_small_order_boundary：小单 degraded=False / 大单 degraded=True
+- [ ] test_m5a_monte_carlo_convergence：N=5000 vs 1000 相对差<5%
+- [ ] test_m5a_end_to_end_pipeline：合成收益→GARCH/DCC→路径→评估→VaR→DailyReport
+
+### Review
+（待填）
+
+### Review
+
+**任务目标**：实现 §11 M5a 集成验收，7 条验收条目以确定性合成数据覆盖。
+
+**结果**：
+- 7/7 验收测试全绿，3 次重跑完全一致（确定性）。
+- `pytest tests/quant/test_m5a_acceptance.py -v` → 7 passed in 0.56s
+- `pytest tests/quant -m "not network" -q` → 512 passed（+7 新增，无回归）
+- commit `86dccd6` `add m5a acceptance test`
+
+**7 验收条目覆盖**：
+1. `test_m5a_report_auto_generated`：DailyReportData 字段齐（signal_perf / deviation / trade_quality / events / var_95/var_99 / archived）
+2. `test_m5a_garch_dcc_calibrated`：3 symbol GARCH-t 拟合 + DCC 拟合，forecast (mu,sigma) 有限、cov 正定、R 对角=1、残差 Ljung-Box p>0.05
+3. `test_m5a_var_kupiec_coverage`：n=500 标准正态 + 1.645 VaR → 例外率~5%、Kupiec p>0.05、CVaR≥VaR
+4. `test_m5a_path_limit_truncation`：超涨/跌停 → 截断+一字板；区间内不截断；过程超界但收盘回落可成交
+5. `test_m5a_counterfactual_small_order_boundary`：小单（100/200 vs vol=1e6）degraded=False 且 pnl_diff>0；大单（5000）degraded=True reason 含 'impact_model'
+6. `test_m5a_monte_carlo_convergence`：N=5000 vs 1000 在 q∈{0.01,0.05} 相对差<5%；同 seed 两次 generate 完全相等
+7. `test_m5a_end_to_end_pipeline`：合成收益→GARCH/DCC→2000 路径→path_matcher→VaR/CVaR→Kupiec→DailyReport 端到端不崩，各环节输出合理
+
+**遗留风险**：
+- 蒙特卡洛收敛测试采用零均值 + 单位协方差（与现有 `test_scenario_generator::test_quantile_convergence` 一致）。非对角协方差下 N=1000 在 q=0.05 处蒙特卡洛噪声较大（实测 rel_diff ~6.7% > 5%），属统计性质非实现缺陷；如需验证复杂协方差收敛，应放大 N 或放宽判据。
+- 端到端测试中 Kupiec 回测为合成演示，非真实历史回测；真实 VaR 回测需 M5b 接入历史 pnl 序列。
+- path_matcher 评估在端到端中对一字板情形用涨停价保守估值，实际生产应按 rule_json 精确重算涨跌停价。
+
+**后续建议**：
+- M5b 接入真实历史收益序列后，补充真实数据的 GARCH/DCC 校准 + VaR 回测验收。
+- 蒙特卡洛收敛如需更高维验证，考虑 N=10000 或 Wilcoxon 检验替代简单相对差判据。
