@@ -1,0 +1,290 @@
+"""QmtGateway 测试（§4.1.1 + xtquant lazy import / Windows-only）。
+
+xtquant 在 macOS 不可装。QmtGateway 顶层不 import xtquant；构造时 lazy import，
+失败抛 RuntimeError('Windows-only')。本测试通过在 sys.modules 注入 fake
+xtquant.xtdata / xtquant.xttrader 模块来模拟 xtquant 行为。
+"""
+import sys
+import types
+from datetime import datetime
+from unittest.mock import MagicMock
+
+import pandas as pd
+import pytest
+
+from quant.gateway.qmt import QmtGateway, _try_import_xtquant
+from quant.gateway.thread_bridge import ThreadBridge
+
+
+# ---------------- fake xtquant 工厂 ----------------
+
+def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
+                          market_data_df: pd.DataFrame | None = None,
+                          captured: dict | None = None) -> dict:
+    """注入 fake xtquant.xtdata + xtquant.xttrader 到 sys.modules。
+
+    返回一个记录对象，包含：
+      - xtdata: fake xtdata 模块（含 subscribe_quote / get_market_data_ex / 追加调用记录）
+      - trader: 最近创建的 fake XtQuantTrader 实例（含 start/connect 调用记录）
+      - trigger_callback(data): 触发订阅时传入的 callback，模拟 xtquant 内部线程回调
+    """
+    state: dict = {
+        "subscribe_calls": [],
+        "history_calls": [],
+        "trader_instances": [],
+        "last_callback": None,
+        "market_data_df": market_data_df if market_data_df is not None else pd.DataFrame(),
+    }
+
+    # ---- fake xtdata ----
+    xtdata = types.ModuleType("xtquant.xtdata")
+
+    def subscribe_quote(symbols, period="", callback=None, **kwargs):
+        state["subscribe_calls"].append({
+            "symbols": list(symbols),
+            "period": period,
+            "callback": callback,
+            "kwargs": kwargs,
+        })
+        state["last_callback"] = callback
+        if captured is not None:
+            captured["last_callback"] = callback
+        return 0
+
+    def get_market_data_ex(period="", start_time="", end_time="", **kwargs):
+        state["history_calls"].append({
+            "period": period,
+            "start_time": start_time,
+            "end_time": end_time,
+            "kwargs": kwargs,
+        })
+        return state["market_data_df"]
+
+    xtdata.subscribe_quote = subscribe_quote  # type: ignore[attr-defined]
+    xtdata.get_market_data_ex = get_market_data_ex  # type: ignore[attr-defined]
+
+    # ---- fake xttrader ----
+    xttrader = types.ModuleType("xtquant.xttrader")
+
+    class _FakeXtQuantTrader:
+        def __init__(self, path, session_id):
+            self.path = path
+            self.session_id = session_id
+            self.start_called = False
+            self.connect_called = False
+            state["trader_instances"].append(self)
+
+        def start(self):
+            self.start_called = True
+            return 0
+
+        def connect(self):
+            self.connect_called = True
+            return connect_return
+
+        def stop(self):
+            self.stop_called = True  # type: ignore[attr-defined]
+            return 0
+
+    xttrader.XtQuantTrader = _FakeXtQuantTrader  # type: ignore[attr-defined]
+
+    # ---- fake 顶层 xtquant 包 ----
+    xtquant_pkg = types.ModuleType("xtquant")
+    xtquant_pkg.xtdata = xtdata  # type: ignore[attr-defined]
+    xtquant_pkg.xttrader = xttrader  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "xtquant", xtquant_pkg)
+    monkeypatch.setitem(sys.modules, "xtquant.xtdata", xtdata)
+    monkeypatch.setitem(sys.modules, "xtquant.xttrader", xttrader)
+    return state
+
+
+# ---------------- 1. 不可用 → RuntimeError ----------------
+
+def test_qmt_unavailable_raises(monkeypatch):
+    """xtquant 缺失（_try_import_xtquant 返回 None）→ 构造抛 RuntimeError。"""
+    # 清掉可能存在的 xtquant 模块，强制 import 失败
+    for name in list(sys.modules):
+        if name == "xtquant" or name.startswith("xtquant."):
+            monkeypatch.setitem(sys.modules, name, None)
+
+    bridge = ThreadBridge()
+    with pytest.raises(RuntimeError, match="Windows-only"):
+        QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+
+def test_try_import_xtquant_returns_none_when_missing(monkeypatch):
+    """_try_import_xtquant 在 xtquant 不可用时返回 None。"""
+    for name in list(sys.modules):
+        if name == "xtquant" or name.startswith("xtquant."):
+            monkeypatch.setitem(sys.modules, name, None)
+    assert _try_import_xtquant() is None
+
+
+# ---------------- 2. fake xtquant → 构造成功 ----------------
+
+def test_qmt_constructs_with_fake_xtquant(monkeypatch):
+    """注入 fake xtquant → QmtGateway 构造成功，trader.start/connect 被调用。"""
+    state = _install_fake_xtquant(monkeypatch, connect_return=0)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=42, bridge=bridge)
+
+    assert len(state["trader_instances"]) == 1
+    trader = state["trader_instances"][0]
+    assert trader.path == "/tmp/qmt"
+    assert trader.session_id == 42
+    assert trader.start_called is True
+    assert trader.connect_called is True
+
+
+# ---------------- 3. subscribe 调用 xtdata.subscribe_quote ----------------
+
+def test_subscribe_calls_xtdata(monkeypatch):
+    """subscribe(["600519"],"1d",cb) → fake xtdata.subscribe_quote 被调用，参数含 symbols/period。"""
+    state = _install_fake_xtquant(monkeypatch)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    on_bar = MagicMock()
+    gw.subscribe(["600519"], "1d", on_bar)
+
+    assert len(state["subscribe_calls"]) == 1
+    call = state["subscribe_calls"][0]
+    assert call["symbols"] == ["600519"]
+    assert call["period"] == "1d"
+    assert callable(call["callback"])
+
+
+# ---------------- 4. 内部线程回调 → bridge → on_bar ----------------
+
+def test_subscribe_callback_bridged(monkeypatch):
+    """触发 fake xtdata 回调（内部线程模拟）→ ThreadBridge.bridge 被调 → on_bar 收到 bar。
+
+    用 mock bridge 直接断言 bridge.bridge 被调用且参数为 bar。
+    """
+    captured: dict = {}
+    state = _install_fake_xtquant(monkeypatch, captured=captured)
+    mock_bridge = MagicMock(spec=ThreadBridge)
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=mock_bridge)
+
+    on_bar = MagicMock()
+    gw.subscribe(["600519"], "1d", on_bar)
+
+    # 模拟 xtquant 内部线程触发回调：传入类似 xtdata 的 data dict
+    # xtdata 回调签名约定：callback(data) 或 callback(all_data)；这里用单参数 dict
+    raw_data = {
+        "stock": "600519",
+        "time": 1710489600000,  # 2024-03-15 15:00:00+08 ms 时间戳
+        "open": 9.8, "high": 10.2, "low": 9.7, "close": 10.0,
+        "volume": 100000, "amount": 1000000.0,
+    }
+    callback = state["last_callback"]
+    assert callback is not None
+    callback(raw_data)
+
+    # bridge.bridge 被调用一次，参数带 OHLCV 与 available_at
+    mock_bridge.bridge.assert_called_once()
+    bar = mock_bridge.bridge.call_args[0][0]
+    assert bar["symbol"] == "600519"
+    assert bar["freq"] == "1d"
+    assert bar["close"] == 10.0
+    assert bar["volume"] == 100000
+    assert "available_at" in bar
+
+
+def test_subscribe_callback_reaches_on_bar_via_real_bridge(monkeypatch):
+    """真 bridge + mock loop：内部回调 → bridge → loop.call_soon_threadsafe → on_bar。"""
+    state = _install_fake_xtquant(monkeypatch)
+    loop = MagicMock()
+    loop.is_running.return_value = True
+    on_bar = MagicMock()
+    bridge = ThreadBridge(loop=loop, on_bar=on_bar)
+
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+    gw.subscribe(["600519"], "1d", on_bar)
+
+    raw_data = {"stock": "600519", "time": 1710489600000,
+                "open": 9.8, "high": 10.2, "low": 9.7, "close": 10.0,
+                "volume": 100000, "amount": 1000000.0}
+    state["last_callback"](raw_data)
+
+    loop.call_soon_threadsafe.assert_called_once()
+    args = loop.call_soon_threadsafe.call_args[0]
+    assert args[0] is on_bar
+    bar = args[1]
+    assert bar["symbol"] == "600519"
+    assert bar["close"] == 10.0
+
+
+# ---------------- 5. history 返回 DataFrame（带 available_at） ----------------
+
+def test_history_returns_dataframe(monkeypatch):
+    """fake xtdata.get_market_data_ex 返回固定 df → QmtGateway.history 返回 df（含 available_at 标注）。"""
+    raw_df = pd.DataFrame({
+        "time": [1710316800, 1710403200],  # 2024-03-13/14 日线时间戳
+        "open": [9.0, 9.5],
+        "high": [9.5, 10.0],
+        "low": [8.8, 9.3],
+        "close": [9.2, 9.8],
+        "volume": [10000, 12000],
+    })
+    state = _install_fake_xtquant(monkeypatch, market_data_df=raw_df)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    df = gw.history("600519", "1d", datetime(2024, 3, 13), datetime(2024, 3, 15))
+    assert isinstance(df, pd.DataFrame)
+    assert "available_at" in df.columns
+    assert len(df) == 2
+    # xtdata.get_market_data_ex 被调用一次，period 正确
+    assert len(state["history_calls"]) == 1
+    assert state["history_calls"][0]["period"] == "1d"
+
+
+# ---------------- 6. bar_at PIT 过滤 ----------------
+
+def test_bar_at_pit_filter(monkeypatch):
+    """history 含 available_at>decision_time 的行 → bar_at 返回 None 或返回 available_at<=decision_time 的行。"""
+    # 构造 raw df：两根 bar，一根 available_at 早于决策，一根晚于决策
+    raw_df = pd.DataFrame({
+        "time": [1710489600, 1710576000],  # 2024-03-15 / 2024-03-16
+        "open": [9.0, 10.0],
+        "high": [9.5, 10.5],
+        "low": [8.8, 9.8],
+        "close": [9.2, 10.2],
+        "volume": [10000, 11000],
+    })
+    _install_fake_xtquant(monkeypatch, market_data_df=raw_df)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    # decision_time 早于第二根 bar 的 available_at → 不可见 → 应 None 或仅返回可见的那一根
+    # 这里 t=2024-03-15，decision_time=2024-03-15 15:00（应当只能看到第一根）
+    bar = gw.bar_at(
+        "600519", "1d",
+        t=datetime(2024, 3, 15),
+        decision_time=datetime(2024, 3, 15, 15, 0),
+    )
+    # 若返回 bar，其 available_at 必须 <= decision_time（PIT 安全）
+    if bar is not None:
+        assert bar["available_at"] <= datetime(2024, 3, 15, 15, 0)
+        assert bar["close"] == 9.2
+
+
+def test_bar_at_returns_none_when_future_only(monkeypatch):
+    """只有未来可见的 bar（available_at > decision_time）→ bar_at 返回 None。"""
+    raw_df = pd.DataFrame({
+        "time": [1710489600],  # 2024-03-15
+        "open": [9.0], "high": [9.5], "low": [8.8], "close": [9.2], "volume": [10000],
+    })
+    _install_fake_xtquant(monkeypatch, market_data_df=raw_df)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    # decision_time 早于任何 available_at → 全部被过滤 → None
+    bar = gw.bar_at(
+        "600519", "1d",
+        t=datetime(2024, 3, 15),
+        decision_time=datetime(2024, 3, 14),  # 早于 bar 时间
+    )
+    assert bar is None
