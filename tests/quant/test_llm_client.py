@@ -79,6 +79,40 @@ def test_complete_json_bad_raises():
         c.complete_json([{"role": "user", "content": "hi"}])
 
 
+def test_complete_json_array_takes_first_element():
+    """真实 LLM 常返回 JSON 数组：取首元素解析为 dict。"""
+    raw = '[{"hypothesis":"x","dsl_expr":"rank(close)"}]'
+    c = _make_client_with_fake(raw)
+    out = c.complete_json([{"role": "user", "content": "hi"}])
+    assert out == {"hypothesis": "x", "dsl_expr": "rank(close)"}
+
+
+def test_complete_json_array_multi_takes_first():
+    """多元素数组也只取首个元素。"""
+    raw = (
+        '[{"hypothesis":"a","dsl_expr":"rank(close)"},'
+        '{"hypothesis":"b","dsl_expr":"ts_mean(close,5)"}]'
+    )
+    c = _make_client_with_fake(raw)
+    out = c.complete_json([{"role": "user", "content": "hi"}])
+    assert out == {"hypothesis": "a", "dsl_expr": "rank(close)"}
+
+
+def test_complete_json_array_first_element_not_dict_raises():
+    """数组首元素非对象（如纯字符串）→ ValueError。"""
+    c = _make_client_with_fake('["not-an-object"]')
+    with pytest.raises(ValueError):
+        c.complete_json([{"role": "user", "content": "hi"}])
+
+
+def test_complete_json_array_with_surrounding_text():
+    """数组前后含解释文字时，仍提取数组并取首元素。"""
+    raw = '候选列表：\n[{"hypothesis":"x","dsl_expr":"rank(close)"}]\n以上。'
+    c = _make_client_with_fake(raw)
+    out = c.complete_json([{"role": "user", "content": "hi"}])
+    assert out == {"hypothesis": "x", "dsl_expr": "rank(close)"}
+
+
 def test_missing_credentials_raises(monkeypatch):
     """清空 env 且无 .env 可读时，构造客户端报 RuntimeError。"""
     for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
