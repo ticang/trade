@@ -127,34 +127,26 @@ def test_golden_etf_normal(store):
 
 # ============================================================
 # 已知局限：ST/可转债 不经 symbol 路由（诚实记录，非缺陷）
-# classify_symbol 仅按前缀分类，无法识别 ST 标记或可转债品种，
-# 需 instrument 级标记数据配合，留 M1。
+# ST 状态时变，classify_symbol 仅按前缀无法识别，需 instrument 级标记（已实现 Instrument.is_st）。
+# 可转债品种经代码前缀（11x/113x/123x）现已可路由（classify_symbol 扩展）。
 # ============================================================
-def test_st_and_convertible_not_routed_via_symbol(store):
-    """ST 标记股/可转债代码经 symbol 路由命中默认主板规则（±10%），
-    而非 ST 规则（±5%）或可转债规则（±20%）。
-
-    这是 classify_symbol 的已知局限：无法仅凭 symbol 识别 ST 状态或
-    可转债品种，需 instrument 级 ST/品种标记数据配合，路由逻辑留 M1。
-    断言其返回主板规则而非 ST/可转债规则，固化当前行为契约。
+def test_st_needs_instrument_convertible_routes_via_symbol(store):
+    """ST 标记股经 symbol 仍命中主板（ST 时变需 instrument 数据）；
+    可转债经代码前缀命中可转债规则（±20%/T+0）。
     """
     p = TradingRuleProvider(store)
 
-    # ST 标记股（600000 浦发银行，假设某段被 ST）：classify 按 6→SSE/main/stock
+    # ST 标记股（600000）：classify_symbol 按 6→SSE/main/stock，看不出 ST 时变状态
     st_hit = p.rules_for("600000", datetime.date(2024, 6, 14))
     assert st_hit is not None
     st_rule = json.loads(st_hit.rule_json)
-    # 应为 ±10%（主板），而非 ±5%（ST）——ST 规则未被路由命中
+    # 主板 ±10%（ST 需 instrument.is_st 路由，symbol 单独看不出）
     assert st_rule["daily_limit_up"] == 0.10
-    assert st_rule["daily_limit_up"] != 0.05  # 非 ST 规则
 
-    # 可转债（113001 以 11 开头）：classify 按 11→开头 1 不匹配任何前缀，
-    # 落入默认 (SSE, main, stock)，命中主板规则而非可转债规则
+    # 可转债（113001 以 113 开头）：classify_symbol 扩展后 → BOND/bond/bond → 命中 convertible_bond
     cb_hit = p.rules_for("113001", datetime.date(2024, 6, 14))
     assert cb_hit is not None
     cb_rule = json.loads(cb_hit.rule_json)
-    # 应为 ±10%（主板 T+1），而非 ±20%（可转债 T+0）
-    assert cb_rule["daily_limit_up"] == 0.10
-    assert cb_rule["settlement_T"] == 1
-    # 非可转债规则（可转债 settlement_T=0）
-    assert cb_rule["settlement_T"] != 0
+    # 可转债 ±20% T+0
+    assert cb_rule["daily_limit_up"] == 0.20
+    assert cb_rule["settlement_T"] == 0
