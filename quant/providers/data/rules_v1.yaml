@@ -339,7 +339,7 @@
 # ============================================================
 - rule_id: etf_crossborder
   market: ETF
-  board: etp
+  board: etp_crossborder   # 独立 board 避免 check_no_overlap 与 etf_normal 冲突；classify_symbol 暂不路由跨境 ETF（需 instrument 级标记，留 M1）
   product_type: fund
   effective_from: 2020-01-01
   effective_to: null
