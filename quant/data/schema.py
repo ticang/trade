@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS tick (symbol VARCHAR, event_ts BIGINT, received_ts BI
 CREATE TABLE IF NOT EXISTS pit_field (field VARCHAR PRIMARY KEY, source VARCHAR, available_at_rule VARCHAR);
 CREATE TABLE IF NOT EXISTS factor_snapshot (snapshot_id VARCHAR PRIMARY KEY, created_ts BIGINT, as_of_cap BIGINT, note VARCHAR);
 CREATE TABLE IF NOT EXISTS data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR,
-    as_of BIGINT, row_count BIGINT, checksum VARCHAR, PRIMARY KEY(snapshot_id, dataset));
+    as_of_cap BIGINT, row_count BIGINT, checksum VARCHAR, PRIMARY KEY(snapshot_id, dataset));
 """
 
 

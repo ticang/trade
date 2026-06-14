@@ -5,8 +5,8 @@ snapshot 记录 as_of_cap（允许的最大 as_of 时间戳，毫秒）：绑定
 只能用 as_of <= as_of_cap 的数据，修订带来的未来行被裁掉。
 
 factor_snapshot / data_snapshot 两表本属 DuckDB 数据库 schema；本模块在 SQLite 事务库
-中按需建表（CREATE IF NOT EXISTS），供回测/实验侧本地冻结与校验使用。data_snapshot
-的 as_of 列改记为 as_of_cap（与 factor_snapshot 一致，按 A4 API 约定），属本模块私有建表。
+中按需建表（CREATE IF NOT EXISTS），供回测/实验侧本地冻结与校验使用。两表统一使用
+as_of_cap 列（与 factor_snapshot 的 cap 语义一致，按 A4 API 约定）。
 """
 from __future__ import annotations
 
@@ -22,8 +22,7 @@ from quant.data.sqlite_store import SqliteStore
 # ---------------------------------------------------------------------------
 # DDL（与 §6 DuckDB 同名表保持列一致；首次 create_snapshot 时在 SQLite 建立）
 # ---------------------------------------------------------------------------
-# 注：DuckDB §6 的 data_snapshot 用 as_of 列；本模块按 A4 API 约定改用 as_of_cap
-# （与 factor_snapshot 一致，便于按冻结 cap 直接读回），属本模块私有建表。
+# data_snapshot 与 factor_snapshot 均用 as_of_cap（cap=上限阈值，§3.3.3）。
 _DDL = """
 CREATE TABLE IF NOT EXISTS factor_snapshot (
     snapshot_id VARCHAR PRIMARY KEY,
