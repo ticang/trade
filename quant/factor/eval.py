@@ -164,35 +164,40 @@ def decile_returns(
     """截面 N 分位分层回测（设计 v0.5 §4.2.3）。
 
     - 按 factor 排序分 n_decile 组（pd.qcut），算每组 forward_returns 均值
-    - 返回 {'decile_means': Series(index=1..n_decile), 'long_short': top-bottom}
+    - 返回 {'decile_means': Series(index=1..n_decile_eff), 'long_short': top-bottom}
     - qcut 因重复值/极端值失败时用 rank-based 分组兜底
+    - 小样本夹紧：n < n_decile 时 n_decile_eff = max(2, min(n_decile, n))，
+      避免 8-symbol panel 触发 qcut 全 NaN 导致 economic gate 误拒；
+      n < 2 无法做多空 → long_short=NaN
     """
     pair = pd.concat(
         [factor.rename("factor"), forward_returns.rename("fwd")], axis=1
     ).dropna()
     n = len(pair)
-    if n < n_decile:
-        # 样本不足以分组：返回全 nan 的 n_decile 组
-        means = pd.Series([float("nan")] * n_decile, index=range(1, n_decile + 1))
+    # 小样本夹紧：分组数不超过 symbol 数，至少 2 组才有做多空意义
+    n_decile_eff = max(2, min(n_decile, n))
+    if n < 2:
+        # 单样本无法分层 → 全 NaN
+        means = pd.Series([float("nan")] * max(n_decile_eff, 1), index=range(1, max(n_decile_eff, 1) + 1))
         return {"decile_means": means, "long_short": float("nan")}
 
     f = pair["factor"]
     r = pair["fwd"]
 
     try:
-        groups = pd.qcut(f, n_decile, labels=False, duplicates="raise")
+        groups = pd.qcut(f, n_decile_eff, labels=False, duplicates="raise")
     except ValueError:
-        # 兜底：按因子排序后的位置均分 n_decile 桶（np.array_split 保证组数=n_decile），
-        # 不依赖值域唯一性，即使大量重复值也能稳定分 10 组
+        # 兜底：按因子排序后的位置均分 n_decile_eff 桶（np.array_split 保证组数=n_decile_eff），
+        # 不依赖值域唯一性，即使大量重复值也能稳定分组
         order = np.argsort(f.to_numpy(dtype=float), kind="stable")
         bucket = np.empty(n, dtype=int)
-        for k, idx in enumerate(np.array_split(order, n_decile)):
+        for k, idx in enumerate(np.array_split(order, n_decile_eff)):
             bucket[idx] = k
         groups = pd.Series(bucket, index=f.index)
 
     # qcut 返回 0..k-1，平移到 1..k 作为分位标签
     groups = groups + 1
-    means = r.groupby(groups).mean().reindex(range(1, n_decile + 1))
+    means = r.groupby(groups).mean().reindex(range(1, n_decile_eff + 1))
 
     top = float(means.iloc[-1])
     bottom = float(means.iloc[0])

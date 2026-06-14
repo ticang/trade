@@ -404,6 +404,85 @@ def test_decile_returns_qcut_fallback():
 
 
 # ---------------------------------------------------------------------------
+# B2-5b. 小样本夹紧：n < n_decile 时夹到 symbol 数，至少 2 组
+# ---------------------------------------------------------------------------
+# 触发场景：M3 8-symbol panel 触发 decile_returns(10) → pd.qcut 无法分 10 组
+# 返回全 NaN → Tester long_short_annual=NaN → economic gate 拒所有。
+# 修复：n_decile_eff = max(2, min(n_decile, n))，分组数随样本自适应。
+def test_decile_returns_small_panel_clamped_to_symbol_count():
+    """n=8 symbol n_decile=10 → 夹紧到 8 组，返回非 NaN 的 decile_means/long_short。
+
+    8-symbol panel 触发的 bug：旧实现 n<n_decile 直接返回全 NaN，导致 M3
+    最终裁决字面 n_passed=0（但 7/15 因子统计显著）。夹紧后经济门可参与判定。
+    """
+    n = 8
+    factor = pd.Series(
+        np.arange(n, dtype=float), index=[f"X{i}" for i in range(n)]
+    )
+    # 收益与因子同序：分层多空 > 0
+    fwd = pd.Series(np.arange(n, dtype=float) * 0.01, index=factor.index)
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    means = result["decile_means"]
+    # 夹紧到 8 组
+    assert len(means) == 8
+    assert list(means.index) == list(range(1, 9))
+    # 不含 NaN（之前 bug：全 NaN）
+    assert not means.isna().any()
+    # long_short 非 NaN 且 > 0（top - bottom > 0，因收益与因子同序）
+    ls = result["long_short"]
+    assert ls == ls  # 非 NaN
+    assert ls > 0
+
+
+def test_decile_returns_three_symbols_clamped():
+    """n=3 → 夹紧到 3 组，能做多空（至少 2 组即可分层）。"""
+    n = 3
+    factor = pd.Series([0.0, 1.0, 2.0], index=[f"X{i}" for i in range(n)])
+    fwd = pd.Series([-0.01, 0.0, 0.01], index=factor.index)
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    means = result["decile_means"]
+    assert len(means) == 3
+    assert list(means.index) == list(range(1, 4))
+    assert not means.isna().any()
+    # top - bottom = 0.01 - (-0.01) = 0.02
+    np.testing.assert_allclose(result["long_short"], 0.02)
+
+
+def test_decile_returns_single_symbol_long_short_nan():
+    """n=1 → 无法分层（< 2），long_short=NaN，decile_means 为单 NaN 组。
+
+    至少需 2 组才能做多空；n=1 时 max(2, 1) 兜底仍为 2 但实际只能取到 1 个样本，
+    分组无意义 → 返回 NaN 表明不可分层。
+    """
+    factor = pd.Series([1.0], index=["X0"])
+    fwd = pd.Series([0.01], index=["X0"])
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    # 单样本无法做多空 → long_short=NaN
+    assert result["long_short"] != result["long_short"]  # NaN
+
+
+def test_decile_returns_large_panel_unchanged():
+    """n=100 n_decile=10 → 仍 10 组（夹紧不影响正常规模截面）。"""
+    n = 100
+    factor = pd.Series(
+        np.linspace(0, 1, n) + RNG.normal(0, 0.01, n),
+        index=[f"X{i}" for i in range(n)],
+    )
+    fwd = pd.Series(
+        np.linspace(0, 1, n) + RNG.normal(0, 0.01, n), index=factor.index
+    )
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    means = result["decile_means"]
+    assert len(means) == 10
+    assert list(means.index) == list(range(1, 11))
+    assert result["long_short"] > 0
+
+
+# ---------------------------------------------------------------------------
 # B2-6. IC 衰减排序
 # ---------------------------------------------------------------------------
 def test_ic_decay_sorted():
