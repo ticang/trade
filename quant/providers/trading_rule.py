@@ -92,6 +92,7 @@ class TradingRuleProvider:
         decision_time: datetime.date | datetime.datetime,
         *,
         require_verified: bool = False,
+        instrument_provider: object | None = None,
     ) -> Optional[TradingRule]:
         """查 symbol 在 decision_time 生效中的交易规则。
 
@@ -100,6 +101,11 @@ class TradingRuleProvider:
         effective_from <= decision_time < effective_to（effective_to 为 NULL 视为永不过期）。
         期望至多 1 行命中；多行取 effective_from 最大那条。
         无命中返回 None。
+
+        instrument_provider（设计 v0.5 §4.1.3 instrument 路由）：
+        - 提供（非 None）→ 经其 classify(symbol, d) 精分类
+          （ST/可转债/跨境 ETF 等基础数据维度命中对应规则）；
+        - 不提供 → 走 classify_symbol 前缀映射（向后兼容，既有调用不破）。
 
         require_verified（实盘语义，设计 v0.5 §11）：
         - False（默认，回测/展示）：命中即返回。
@@ -112,7 +118,11 @@ class TradingRuleProvider:
             if isinstance(decision_time, datetime.datetime)
             else decision_time
         )
-        market, board, product_type = classify_symbol(symbol)
+        if instrument_provider is not None:
+            # 经 instrument 精分类（ST 时变/可转债/跨境 ETF 等）
+            market, board, product_type = instrument_provider.classify(symbol, d)
+        else:
+            market, board, product_type = classify_symbol(symbol)
         ds = d.isoformat()
 
         # 区间右开：effective_from <= d AND (effective_to IS NULL OR effective_to > d)
