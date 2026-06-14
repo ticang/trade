@@ -42,6 +42,9 @@ class SqliteStore:
         self._thread: Optional[threading.Thread] = None
         self._conn: Optional[sqlite3.Connection] = None
         self._stop = threading.Event()
+        # 读串行锁：同一 sqlite3 连接上多线程并发 execute→fetchall 会互相截断游标
+        # （threadsafety=3 仅在 C 层串行 execute，不保护两步序列），故 query_* 必须互斥
+        self._read_lock = threading.Lock()
         # 写线程异常收集（最近一次），避免静默吞掉写失败
         self.last_error: Optional[BaseException] = None
 
@@ -109,18 +112,28 @@ class SqliteStore:
     def query_one(
         self, sql: str, params: Sequence[Any] = ()
     ) -> Optional[sqlite3.Row]:
-        """读单行。调用前应 flush 以确保写已落盘（应用约定）。"""
+        """读单行。调用前应 flush 以确保写已落盘（应用约定）。
+
+        持 _read_lock 串行：共享连接上并发 execute→fetchone 会破坏游标状态。
+        """
         assert self._conn is not None, "query 前必须 start"
-        cur = self._conn.execute(sql, tuple(params))
-        return cur.fetchone()
+        with self._read_lock:
+            cur = self._conn.execute(sql, tuple(params))
+            return cur.fetchone()
 
     def query_all(
         self, sql: str, params: Sequence[Any] = ()
     ) -> list[sqlite3.Row]:
-        """读多行。调用前应 flush 以确保写已落盘（应用约定）。"""
+        """读多行。调用前应 flush 以确保写已落盘（应用约定）。
+
+        持 _read_lock 串行：共享连接上并发 execute→fetchall 会互相截断游标结果
+        （观测到结果行被截断），即使 sqlite3 threadsafety=3 也无法避免，因 execute 与
+        fetchall 是两步、连接级互斥锁不覆盖中间态。
+        """
         assert self._conn is not None, "query 前必须 start"
-        cur = self._conn.execute(sql, tuple(params))
-        return cur.fetchall()
+        with self._read_lock:
+            cur = self._conn.execute(sql, tuple(params))
+            return cur.fetchall()
 
     def flush(self, timeout: float = 5.0) -> bool:
         """投 barrier 并等待其完成，保证此前所有 exec 已 commit。
