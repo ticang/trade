@@ -72,7 +72,7 @@
 
 ### M0 后端基础设施（在 `feat/m1a-local-probes` 或新分支 `feat/m0-backend`）
 - 设计 v0.5 §11 M0/M0.5：项目骨架、SQLite+DuckDB+Repository、ProviderRegistry、事件总线、PIT、trading_rule、数据质量验证层
-- **M0.5 TradingRuleProvider**（独立子模块）：规则表 v1 录入（沪深 A 股+科创/创业/北交+ETF，2020 至今）+ 人工 golden cases + source_confidence
+- **M0.5 TradingRuleProvider**（独立子模块）：当前规则表 v1 仅录入沪深主板股票 + 主板 ST（2020 至今）+ 人工 golden cases + source_confidence；科创/创业/北交/ETF/可转债为后续扩展，补来源/fixture/验收前不进实盘范围
 - M0 待办（M-1a 带入）：① 交易日历调休 overlay ② AkShare 中国网络复验 ③ DuckDB 全市场 5300 规模实测
 - 后续 M1/M1.5/M2... 见设计 §11 路线图
 

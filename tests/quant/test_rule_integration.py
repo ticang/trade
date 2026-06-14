@@ -44,22 +44,14 @@ def test_full_pipeline(store):
     assert sse_main is not None
     assert json.loads(sse_main.rule_json)["daily_limit_up"] == 0.10
 
-    # 科创板 688981：±20%
-    sse_star = p.rules_for("688981", datetime.date(2024, 6, 14))
-    assert sse_star is not None
-    assert json.loads(sse_star.rule_json)["daily_limit_up"] == 0.20
+    # 当前阶段外品种不命中默认交易规则；扩展前须补 source/fixture。
+    assert p.rules_for("688981", datetime.date(2024, 6, 14)) is None
+    assert p.rules_for("300750", datetime.date(2020, 1, 6)) is None
+    assert p.rules_for("830799", datetime.date(2024, 6, 14)) is None
+    assert p.rules_for("510300", datetime.date(2024, 6, 14)) is None
+    assert p.rules_for("113001", datetime.date(2024, 6, 14)) is None
 
-    # 创业板 300750 改革前区间：±10%
-    chinext_pre = p.rules_for("300750", datetime.date(2020, 1, 6))
-    assert chinext_pre is not None
-    assert json.loads(chinext_pre.rule_json)["daily_limit_up"] == 0.10
-
-    # 北交所 830799：±30%
-    bse = p.rules_for("830799", datetime.date(2024, 6, 14))
-    assert bse is not None
-    assert json.loads(bse.rule_json)["daily_limit_up"] == 0.30
-
-    # 全表区间不重叠（种子 10 条互斥，含创业板改革前后相邻段）
+    # 全表区间不重叠（当前种子仅沪深主板股票 + ST 主板）
     rows = store.query_all(
         "SELECT rule_id, market, board, product_type, "
         "effective_from, effective_to FROM trading_rule"

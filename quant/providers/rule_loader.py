@@ -4,7 +4,7 @@
 - 读 data/rules_v1.yaml（A 股结构性规则种子，置信分层标注）
 - 每条 INSERT OR REPLACE INTO trading_rule，rule_json（YAML dict）经 json.dumps 存字符串
 - 写后全表查行调 TradingRuleProvider.check_no_overlap 严校验区间不重叠
-  （protect 数据完整性：种子里 ETF 普通/跨境靠 board 区分，无重叠）
+  （protect 数据完整性：当前种子仅沪深主板股票 + ST 主板）
 
 幂等：INSERT OR REPLACE by rule_id（PK），重复 load 不报错不翻倍。
 """
@@ -18,7 +18,7 @@ import yaml
 from quant.data.sqlite_store import SqliteStore
 from quant.providers.trading_rule import TradingRuleProvider
 
-# 种子 YAML：A 股交易规则 v1（结构性规则 verified，费用明细 provisional）
+# 种子 YAML：当前主板交易规则 v1（结构性规则 verified，费用明细 provisional）
 DEFAULT_RULES_YAML = Path(__file__).parent / "data" / "rules_v1.yaml"
 
 # 写入列对齐 schema.trading_rule DDL

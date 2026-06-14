@@ -1,10 +1,10 @@
-"""组合优化器：标量化 QP + 多 lot 整数化 + gap（§4.4.3）。
+"""组合优化器：标量化 QP + 主板 100 股整数化 + gap（§4.4.3）。
 
 目标：max α'w − λ·TE² − γ·turnover
   - α = 信号 strength（多头方向），TE 为相对基准的平方跟踪误差
   - turnover 为相对当前持仓的 L1 换手
 约束：满仓、单票上限、换手硬上限。
-连续 QP 解 → 多lot 整数化启发式（按 α 降序贪心，违反约束降一档）
+连续 QP 解 → lot 整数化启发式（当前默认主板 100 股，按 α 降序贪心，违反约束降一档）
 → gap = |obj_int − obj_cont| / |obj_cont| 量化整数化损失，超阈值告警。
 """
 from dataclasses import dataclass, field
@@ -92,7 +92,7 @@ class PortfolioOptimizer:
                 note="qp infeasible, fallback to equal weight",
             )
 
-        # 多lot 整数化
+        # 当前主板 lot 整数化
         w_int = self._integerize(alpha, w_cont, symbols, total_capital)
 
         obj_cont = self._objective(alpha, w_cont, w_cur, w_bench)
@@ -157,7 +157,7 @@ class PortfolioOptimizer:
         problem.solve()
 
     # ------------------------------------------------------------------
-    # 多 lot 整数化（§4.4.3 M1.5 简化）
+    # 主板 lot 整数化（§4.4.3 M1.5 简化）
     # ------------------------------------------------------------------
     def _integerize(
         self,

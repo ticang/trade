@@ -1,6 +1,5 @@
-"""classify 扩展测试：可转债前缀 + 经 instrument 精分类（设计 v0.5 §4.1.3）。
+"""classify 范围测试：当前默认路由只支持沪深主板。
 
-- 可转债有独立代码段（11x/113x/123x），classify_symbol 直接识别。
 - classify_with_instrument：当 instrument 提供且 symbol 命中时，
   以 instrument.market/board/product_type 为准，并在 ST 时段/跨境 ETF 时改写 board。
 """
@@ -15,21 +14,14 @@ from quant.providers.trading_rule import (
 )
 
 
-def test_classify_convertible_bond_codes():
-    """可转债独立代码段 → (BOND, bond, bond)。"""
-    assert classify_symbol("113001") == ("BOND", "bond", "bond")
-    assert classify_symbol("110001") == ("BOND", "bond", "bond")
-    assert classify_symbol("123001") == ("BOND", "bond", "bond")
-
-
-def test_classify_existing_prefixes_unchanged():
-    """既有前缀规则保持向后兼容（股票/基金/北交所不变）。"""
+def test_classify_current_scope_mainboard_only():
+    """默认前缀规则仅支持沪深主板；其他板块/品种延期。"""
     assert classify_symbol("600519") == ("SSE", "main", "stock")
-    assert classify_symbol("688981") == ("SSE", "star", "stock")
     assert classify_symbol("000001") == ("SZSE", "main", "stock")
-    assert classify_symbol("300750") == ("SZSE", "chinext", "stock")
-    assert classify_symbol("830799") == ("BSE", "main", "stock")
-    assert classify_symbol("510300") == ("ETF", "etp", "fund")
+
+    unsupported = ("UNSUPPORTED", "unsupported", "unsupported")
+    for symbol in ("688981", "300750", "830799", "510300", "113001"):
+        assert classify_symbol(symbol) == unsupported
 
 
 def test_classify_with_instrument_st():
@@ -58,10 +50,10 @@ def test_classify_with_instrument_fallback():
         "main",
         "stock",
     )
-    # symbol 未在 instrument 字典中
+    # symbol 未在 instrument 字典中；688 属延期科创板 → unsupported
     assert classify_with_instrument("688981", on, {"600519": Instrument(
         symbol="600519", market="SSE", board="main", product_type="stock"
-    )}) == ("SSE", "star", "stock")
+    )}) == ("UNSUPPORTED", "unsupported", "unsupported")
 
 
 def test_classify_with_instrument_etf_crossborder():

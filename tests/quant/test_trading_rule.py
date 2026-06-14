@@ -70,13 +70,16 @@ def _insert(
 
 
 def test_classify_symbol():
-    """A 股 symbol 前缀→(market,board,product_type) 简化映射。"""
+    """当前阶段默认前缀路由只支持沪深主板股票。"""
     assert classify_symbol("600519") == ("SSE", "main", "stock")
-    assert classify_symbol("688981") == ("SSE", "star", "stock")
     assert classify_symbol("000001") == ("SZSE", "main", "stock")
-    assert classify_symbol("300750") == ("SZSE", "chinext", "stock")
-    assert classify_symbol("830799") == ("BSE", "main", "stock")
-    assert classify_symbol("510300") == ("ETF", "etp", "fund")
+
+    unsupported = ("UNSUPPORTED", "unsupported", "unsupported")
+    assert classify_symbol("688981") == unsupported
+    assert classify_symbol("300750") == unsupported
+    assert classify_symbol("830799") == unsupported
+    assert classify_symbol("510300") == unsupported
+    assert classify_symbol("113001") == unsupported
 
 
 def test_empty_table_returns_none(store):

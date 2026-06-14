@@ -1,10 +1,9 @@
 """Instrument 路由集成验收（设计 v0.5 §4.1.3 / §6 / §11）。
 
-load_rules(M0.5 种子) + InstrumentProvider 联动，端到端验证四类路由：
+load_rules(M0.5 种子) + InstrumentProvider 联动，端到端验证当前范围路由：
 - ST 股（SZSE/st/stock，±5%）经 instrument ST 时变标记命中 st_main
-- 可转债（BOND/bond/bond，±20%/T+0/tick0.001）命中 convertible_bond
-- 跨境 ETF（ETF/etp_crossborder/fund，T+0）命中 etf_crossborder
 - 普通股（SSE/main/stock，±10%）仍走主板规则
+- 可转债/跨境 ETF 可被 instrument 表达，但规则当前延期，应不命中
 
 区别于 test_rules_with_instrument（rules_for 接 provider 单测）：
 本文件侧重规则与 instrument 数据的协同路由终态，作为 §4.1.3 instrument 路由的验收门禁。
@@ -63,8 +62,8 @@ def test_st_stock_routes_to_st_main(store):
     assert payload["daily_limit_down"] == 0.05
 
 
-def test_convertible_bond_routes_to_convertible_bond(store):
-    """可转债经 instrument 命中 convertible_bond（±20%/T+0/tick0.001）。"""
+def test_convertible_bond_rule_deferred(store):
+    """可转债经 instrument 精分类后仍不命中当前规则种子。"""
     t = datetime.date(2024, 6, 1)
     inst = Instrument(
         symbol="113001", market="BOND", board="bond", product_type="bond"
@@ -72,18 +71,11 @@ def test_convertible_bond_routes_to_convertible_bond(store):
     provider = InstrumentProvider(instruments={"113001": inst})
     p = TradingRuleProvider(store)
 
-    hit = p.rules_for("113001", t, instrument_provider=provider)
-    assert hit is not None
-    assert hit.rule_id == "convertible_bond"
-    payload = json.loads(hit.rule_json)
-    assert payload["daily_limit_up"] == 0.20
-    assert payload["daily_limit_down"] == 0.20
-    assert payload["settlement_T"] == 0
-    assert payload["tick"] == 0.001
+    assert p.rules_for("113001", t, instrument_provider=provider) is None
 
 
-def test_etf_crossborder_routes_to_crossborder_rule(store):
-    """跨境 ETF（etf_crossborder=True）经 instrument 命中 etf_crossborder（T+0）。"""
+def test_etf_crossborder_rule_deferred(store):
+    """跨境 ETF 经 instrument 精分类后仍不命中当前规则种子。"""
     t = datetime.date(2024, 6, 1)
     inst = Instrument(
         symbol="510900",
@@ -95,12 +87,7 @@ def test_etf_crossborder_routes_to_crossborder_rule(store):
     provider = InstrumentProvider(instruments={"510900": inst})
     p = TradingRuleProvider(store)
 
-    hit = p.rules_for("510900", t, instrument_provider=provider)
-    assert hit is not None
-    assert hit.rule_id == "etf_crossborder"
-    assert hit.board == "etp_crossborder"
-    payload = json.loads(hit.rule_json)
-    assert payload["settlement_T"] == 0
+    assert p.rules_for("510900", t, instrument_provider=provider) is None
 
 
 def test_normal_stock_still_main_board(store):

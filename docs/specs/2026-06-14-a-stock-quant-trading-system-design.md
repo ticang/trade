@@ -3,13 +3,13 @@
 > 版本: v0.5  ·  日期: 2026-06-14  ·  状态: 设计评审中
 >
 > **修订要点**（v0.5 吸收四维度独立红队审阅，详见 `docs/review/2026-06-14-v04-redteam-4dim-review.md`）：
-> ① **一期宣称诚实化**：一期 = 因子工程管线 + 市场宽度/资金流因子（非反向）；散户情绪反向作为二期 alpha 目标；北向/两融标注"不宜作反向源"；② **风控 T+1 → per-product T+N**（从 TradingRuleProvider.settlement 取，可转债/部分 ETF T+0）；③ **多账户**一期支持（position/orders/fills 加 account_id，Broker per-account）；④ **因子评价**强制行业/市值中性化残差 + rank IC + Newey-West + 经济显著性双门 + 新颖性 0.5-0.7；⑤ **PIT 可复现性**引入 `factor_snapshot_id`（冻结数据快照），区分代码版本/数据快照，区分实时段（可证）/回填段（`pit_confidence=rule_inferred`）；⑥ **组合优化**明确标量化公式 + λ/γ + 基准 + QP-vs-整数化 gap + 求解器命名；⑦ **情景模拟**改 GARCH/EGARCH-t + DCC 动态相关，路径强制过撮合模拟器；⑧ **行为学习**标签=actor 实现 PnL、龙虎榜标"仅高波动子集"、删"两路共识入库"、按 actor 切 OOS；⑨ **分层并发**：因子/策略 offload ProcessPool、网关背压、SQLite 写独立线程、DuckDB 单写进程交接；⑩ **沙箱**改 DSL 手写解释器路线（删 RestrictedPython 主沙箱）；⑪ **M-1 拆 M-1a（本地）/M-1b（外部通道）**；⑫ **TradingRuleProvider 升级独立子模块 M0.5**；⑬ 新增 **§16 数据合规清单**；⑭ 补止损止盈/策略生命周期/再平衡频率/进程内事件总线/bar 去重/策略隔离；⑮ 移除 APScheduler；⑯ §15 URL 加状态列、过户费改 provisional。
+> ① **一期宣称诚实化**：一期 = 因子工程管线 + 市场宽度/资金流因子（非反向）；散户情绪反向作为二期 alpha 目标；北向/两融标注"不宜作反向源"；② **当前阶段仅做沪深主板股票**，风控结算按主板 T+1 落地，TradingRuleProvider 保留 per-product T+N 扩展口；③ **多账户**一期支持（position/orders/fills 加 account_id，Broker per-account）；④ **因子评价**强制行业/市值中性化残差 + rank IC + Newey-West + 经济显著性双门 + 新颖性 0.5-0.7；⑤ **PIT 可复现性**引入 `factor_snapshot_id`（冻结数据快照），区分代码版本/数据快照，区分实时段（可证）/回填段（`pit_confidence=rule_inferred`）；⑥ **组合优化**明确标量化公式 + λ/γ + 基准 + QP-vs-整数化 gap + 求解器命名；⑦ **情景模拟**改 GARCH/EGARCH-t + DCC 动态相关，路径强制过撮合模拟器；⑧ **行为学习**标签=actor 实现 PnL、龙虎榜标"仅高波动子集"、删"两路共识入库"、按 actor 切 OOS；⑨ **分层并发**：因子/策略 offload ProcessPool、网关背压、SQLite 写独立线程、DuckDB 单写进程交接；⑩ **沙箱**改 DSL 手写解释器路线（删 RestrictedPython 主沙箱）；⑪ **M-1 拆 M-1a（本地）/M-1b（外部通道）**；⑫ **TradingRuleProvider 升级独立子模块 M0.5**；⑬ 新增 **§16 数据合规清单**；⑭ 补止损止盈/策略生命周期/再平衡频率/进程内事件总线/bar 去重/策略隔离；⑮ 移除 APScheduler；⑯ §15 URL 加状态列、过户费改 provisional。
 
 ---
 
 ## 0. 摘要
 
-构建一套面向 A 股、**分阶段演进（技术探测 → 回测校准 → 模拟盘 → 小资金实盘）** 的多策略可插拔量化交易平台，支持**单用户多券商账户**。一期差异化能力为 **multi-agent 自动因子挖掘管线 + 市场宽度/资金流因子**；散户情绪反向作为二期 alpha 目标（依赖社媒采集合规放行）。同时扩展 **情景模拟复盘** 与 **主体行为学习** 两条迭代闭环（M5）。起步采用零独立中间件的分层单体架构（SQLite + DuckDB + asyncio），通过 Repository / Provider 抽象保证迁移路径。所有外部数据和交易规则以 **point-in-time 语义** 约束（区分实时段可证 / 回填段推断），回测 / 模拟 / 实盘在接口层共用、在撮合层显式建模偏差。
+构建一套面向 A 股的多策略可插拔量化交易平台，**当前阶段只覆盖沪深主板股票**，按“技术探测 → 回测校准 → 模拟盘 → 小资金实盘”分阶段演进，支持**单用户多券商账户**。一期差异化能力为 **agent 因子挖掘管线（M3 单 agent 起步，M6 multi-agent 增强）+ 市场宽度/资金流因子**；散户情绪反向作为二期 alpha 目标（依赖社媒采集合规放行）。同时扩展 **情景模拟复盘** 与 **主体行为学习** 两条迭代闭环（M5）。起步采用零独立中间件的分层单体架构（SQLite + DuckDB + asyncio），通过 Repository / Provider 抽象保证迁移路径。所有外部数据和交易规则以 **point-in-time 语义** 约束（区分实时段可证 / 回填段推断），回测 / 模拟 / 实盘在接口层共用、在撮合层显式建模偏差。
 
 ---
 
@@ -30,7 +30,7 @@
 |---|---|
 | 分阶段落地 | 技术探测 → 模拟盘 → 实盘；回测 / 模拟 / 实盘接口层共用 |
 | 多策略可插拔 | 统一策略接口与因子库，多策略并行、信号仲裁、组合优化 |
-| 一期差异化 | **因子工程管线（multi-agent 挖掘）+ 市场宽度/资金流因子**；散户情绪反向作二期目标 |
+| 一期差异化 | **因子工程管线（M3 单 agent 起步，M6 multi-agent 增强）+ 市场宽度/资金流因子**；散户情绪反向作二期目标 |
 | 两条迭代闭环 | 情景模拟复盘（M5a）+ 主体行为学习（M5b） |
 | 风控分层 | 服务"个人小资金"与"中等规模严肃"两档，**支持多券商账户** |
 | 基础交易完整 | 止损止盈、策略生命周期管理、再平衡频率 |
@@ -38,9 +38,10 @@
 ### 1.3 非目标（明确排除）
 
 - 不做高频 / Tick 级做市（面向分钟级及以上，决策链路目标秒级）。
-- 不做跨市场（仅 A 股；港股/美股/期货不在范围）。
+- 不做跨市场（当前仅沪深主板股票；港股/美股/期货不在范围）。
+- 不在当前阶段覆盖科创板、创业板、北交所、ETF、可转债、B 股；这些作为后续扩展，需补规则 fixture 后再进入实盘范围。
 - 不做面向多租户的 SaaS（**单用户多账户**，非多用户）。
-- 不使用融资融券 / 杠杆（默认现货，**结算周期 T+N 按品种规则表取值**）。
+- 不使用融资融券 / 杠杆（默认现货；当前主板股票按 **T+1**，后续品种再按规则表扩展 T+N）。
 - 不在首期实现社媒私域爬取（合规开关默认关闭）。
 
 ### 1.4 资金档位（与开户门槛解耦 + 档内分档）
@@ -68,12 +69,14 @@
 | ② 因子引擎 | 因子注册表、向量化计算、增量截面快照、缓存（DuckDB）、**中性化评价**；**factor_snapshot_id 可复现**；PIT 强制 |
 | ③ AI 因子挖掘 | 3a 单 agent → 3b multi-agent；**DSL 手写解释器沙箱**；实验追踪；假设预算 |
 | ④ 策略引擎 | Strategy 接口、多策略调度、**组合优化器**、事件驱动模板、**止损止盈/策略生命周期/再平衡频率**、**策略隔离**、**ctx 契约** |
-| ⑤ 风控 | 分层：基础（仓位/T+N/涨跌停/申报合法性/**止损止盈**）+ 严肃（回撤熔断/行业暴露/流动性/告警） |
+| ⑤ 风控 | 分层：基础（仓位/主板 T+1/涨跌停/申报合法性/**止损止盈**）+ 严肃（回撤熔断/行业暴露/流动性/告警） |
 | ⑥ 执行层 | 统一 Broker 接口（per-account）；QMT/模拟适配器；拆单；线程桥接；**on_fill 异步回调** |
-| ⑦ 回测引擎 | 事件驱动撮合、摩擦建模、A股规则、**绩效归因（基准+Shapley+CNE6）**、**实盘-回测一致性校验**、**PIT 置信度打标** |
+| ⑦ 回测引擎 | 事件驱动撮合、摩擦建模、主板 A 股规则、**绩效归因（基准+Shapley+CNE6）**、**实盘-回测一致性校验**、**PIT 置信度打标** |
 | ⑧ 情景模拟与复盘 | 反事实回放（**界定边界**）、次日情景（**GARCH/DCC**）、每日复盘 |
 | ⑨ 主体行为学习 | Actor 抽象、买卖点样本库（**标签=实现PnL**）、画像、学习→因子（**标准门禁，非两路共识**） |
 | ⑩ 可观测性 | 结构化日志、指标落库、告警、三合一复盘报表、**配置热加载**、灰度金丝雀 |
+| ⑪ UI / 前端 | Next.js 仪表盘；`DESIGN.md` 作为 UI 设计系统配置源；币安风格深色金融界面、交易语义色、组件 token 映射 |
+| ⑫ 前后端 API | 后端 HTTP API（只读优先）+ 前端 API client；替换 mock hooks；统一 loading/error/empty 状态；真实下单 POST 延后到 M4 门禁后 |
 | 横切 | 数据质量验证层 · 实验追踪 · PIT 语义 · 盘前盘后流程 · 事件总线 · 密钥管理 |
 
 ### 2.2 非功能需求
@@ -98,8 +101,9 @@
 | AI 基础 | 商用 API（DeepSeek 主）+ 单 agent 起步 → multi-agent；**DSL 手写解释器沙箱** |
 | 资金定位 | 小资金 + 中等规模（档内分档）→ 风控分层 |
 | 存储/中间件 | SQLite（事务）+ DuckDB（分析）+ asyncio；零独立中间件 |
-| 交易规则 | TradingRuleProvider 按市场/品种/生效日期返回（独立子模块 M0.5） |
-| 结算 | **per-product T+N**（从规则表取） |
+| 交易范围 | **当前阶段仅沪深主板股票**；科创/创业/北交/ETF/可转债后续扩展 |
+| 交易规则 | TradingRuleProvider 按市场/品种/生效日期返回（独立子模块 M0.5）；当前规则集仅录入沪深主板股票 |
+| 结算 | 当前按主板股票 **T+1** 落地；Provider 保留 per-product T+N 扩展口 |
 | ⑧ 次日模拟 | **GARCH/EGARCH-t + DCC**，路径过撮合模拟器，AI 融合显式公式 |
 | ⑨ 行为学习 | 三者并行（统计+AI归纳+ML），**标准门禁入库**，按 actor 切 OOS |
 
@@ -145,7 +149,7 @@
                            ▼             │ GARCH/DCC反事实 │        │
                     ┌──────────────┐     │ /每日复盘        │        │
                     │ ⑤ 风控(分层) │     └────────┬─────────┘        │
-                    │ T+N/止损止盈 │              │ 复用回测         │
+                    │ T+1/止损止盈 │              │ 复用回测         │
                     └──────┬───────┘              └──────────────────┘
                            ▼ 目标订单(多账户)
                     ┌──────────────┐
@@ -170,21 +174,22 @@
 
 ### 3.2 模块清单
 
-① 数据层 · ② 因子引擎 · ③ AI 因子挖掘 · ④ 策略引擎 · ⑤ 风控 · ⑥ 执行层 · ⑦ 回测引擎 · ⑧ 情景模拟与复盘 · ⑨ 主体行为学习 · ⑩ 可观测性
+① 数据层 · ② 因子引擎 · ③ AI 因子挖掘 · ④ 策略引擎 · ⑤ 风控 · ⑥ 执行层 · ⑦ 回测引擎 · ⑧ 情景模拟与复盘 · ⑨ 主体行为学习 · ⑩ 可观测性 · ⑪ UI / 前端 · ⑫ 前后端 API
 
-（数据质量验证层、组合优化器、绩效归因、实验追踪、PIT 语义、盘前盘后流程、事件总线、密钥管理 作为子模块或横切能力嵌入。）
+（数据质量验证层、组合优化器、绩效归因、实验追踪、PIT 语义、盘前盘后流程、事件总线、密钥管理、UI 设计系统 token、前后端 API 契约作为子模块或横切能力嵌入。）
 
 ### 3.3 核心设计原则
 
 1. **接口层三态共用（诚实表述）**：策略/风控/执行接口在回测/模拟/实盘一致，唯一差异是 Broker 适配器；撮合行为不对称需校准 + 实盘落 tick；ctx 持仓新鲜度与 Broker 同步/异步阻抗需显式处理（on_fill 回调模板）。
 2. **point-in-time 分级**：实时采集段 PIT 可证；回填段 `available_at` 为规则推断（`pit_confidence=rule_inferred`），回测结果打标，不与实盘段混。
 3. **回测可复现**：每次回测绑定 `factor_snapshot_id`（冻结数据快照），区分代码版本（factor_version）与数据快照（snapshot_id）。
-4. **交易规则版本化**：涨跌幅/tick/数量/费用/结算 T+N/时段按市场/品种/生效日期取值，不硬编码，规则表来自官方并留来源。
+4. **交易规则版本化**：当前主板股票的涨跌幅/tick/数量/费用/结算 T+1/时段按市场/生效日期取值，不硬编码，规则表来自官方并留来源；后续品种再扩展 per-product T+N。
 5. **分层并发**：行情线程 → asyncio 入队 → 因子/策略 CPU 计算 offload ProcessPool → 回 asyncio → 下单；SQLite 写独立线程；DuckDB 单写进程交接；网关背压。
 6. **分期最小必要质量**：每里程碑可运行、可验证（量化阈值+测量脚本）、可回滚。
 7. **风控分层**：基础层（小资金）+ 严肃层（中等规模，档内分档参数）。
 8. **防过拟合贯穿**：样本外/walk-forward、FDR（分母用预算数）、锁死 holdout（一次性永久锁）、新颖性 0.5-0.7、AI 归纳已知因子百科查重。
 9. **抽象先行**：Repository/Provider/Broker/Factor/Strategy 均为接口，**业务语义不暴露存储特性**（性能特性可保留）；分布式迁移需重写并发模型，非零成本。
+10. **UI 配置单一来源**：`DESIGN.md` 是前端视觉 token 与组件风格的权威配置源；实现层（Tailwind/theme/components）只做映射，不在页面内散落硬编码颜色、字号和圆角。
 
 ---
 
@@ -218,11 +223,11 @@
 
 基础数据：股票清单、复权因子、交易日历（**含调休，数据源 exchange_calendars + 交易所公告人工 overlay**）、ST/停牌/退市（含退市整理期）、板块归属、指数成分、证券类别、交易权限、**最小报价单位档位**。
 
-交易规则 `TradingRuleProvider`（独立子模块，见 M0.5），按 `market + board + product_type + effective_from/effective_to` 返回：
+交易规则 `TradingRuleProvider`（独立子模块，见 M0.5），按 `market + board + product_type + effective_from/effective_to` 返回。**当前阶段只录入沪深主板股票规则**，接口保留科创/创业/北交/ETF/可转债扩展字段：
 
-- 价格：申报价格最小变动单位（沪深 A 股股票常规 0.01 元；ETF/基金/可转债另表）、涨跌幅比例、无涨跌幅窗口、有效价格申报范围。
-- 数量：买入最小数量、递增单位（主板/创业板 100 整数倍、科创板 200 起、北交所 100 起递增 1）、卖出不足一手处理、最大申报数量。
-- 结算：**T+N 结算周期（股票 T+1、可转债 T+0、部分 ETF T+0）**。
+- 价格：申报价格最小变动单位（主板股票常规 0.01 元）、涨跌幅比例、无涨跌幅窗口、有效价格申报范围。
+- 数量：买入最小数量、递增单位（主板 100 整数倍）、卖出不足一手处理、最大申报数量。
+- 结算：当前主板股票 **T+1**；Provider 保留 `settlement` 字段，后续品种再填 per-product T+N。
 - 时段：开盘/连续/收盘集合竞价、盘后固定价格交易（预留）。
 - 费用：佣金、印花税、过户费、经手费，全部配置化带生效日期。
 
@@ -275,7 +280,8 @@ class SentimentProvider(Protocol):
     def market_sentiment(self, t) -> MarketSentiment: ...
 
 class TradingRuleProvider(Protocol):
-    def rules_for(self, symbol, decision_time) -> TradingRule: ...   # 含 settlement T+N
+    def rules_for(self, symbol, decision_time, require_verified: bool = False) -> TradingRule | None: ...
+    # 当前主板T+1，保留settlement扩展；实盘路径 require_verified=True，provisional/pending 返回 None 以阻断新开仓
 ```
 
 ---
@@ -382,7 +388,7 @@ class StrategyRunner:
 
 明确**标量化目标**：`max α'w − λ·TE² − γ·turnover`，λ（风险厌恶）/γ（换手惩罚）设定方法文档化（效用函数/风险预算/历史回测调参——**λ/γ 调参计入假设数**）。**基准可配置**（默认 CSI500 或自定义）。
 
-- 约束：单票上限、行业暴露、换手率（**惩罚项为主，硬约束作上限**，避免信号翻转大时 QP 不可行）、**多 lot 整数化**（主板 100、科创 200、北交递增 1，建模为多 lot 变量纳入 QP）、最小持仓。
+- 约束：单票上限、行业暴露、换手率（**惩罚项为主，硬约束作上限**，避免信号翻转大时 QP 不可行）、**主板 100 股 lot 整数化**（后续品种再扩展多 lot 变量）、最小持仓。
 - 求解：QP（cvxpy）连续解 → round + 约束修复启发式（按 alpha 强度降序贪心填充，违反约束降一档 lot 重试，超时回退连续解）；**强制报告 QP 解 vs 整数化后目标 gap，gap > 阈值告警**。
 - 求解器：盘中 QP+round（开源 OSQP）；盘后允许 MIQP（SCIP via pyscipopt），超时兜底；中等规模 B 可接 Gurobi。
 
@@ -399,7 +405,7 @@ class StrategyRunner:
 
 | 层 | 适用 | 规则 |
 |---|---|---|
-| 基础层 | 全档启用 | 单票/总仓位上限、**T+N 结算约束（从 rules.settlement 取）**、涨跌停/停牌/ST/退市过滤、申报价格 tick/数量合法性、交易权限、**单仓位止损/止盈/跟踪止损**、单笔金额上限 |
+| 基础层 | 全档启用 | 单票/总仓位上限、**主板 T+1 结算约束（从 rules.settlement 取）**、涨跌停/停牌/ST/退市过滤、申报价格 tick/数量合法性、交易权限、**单仓位止损/止盈/跟踪止损**、单笔金额上限 |
 | 严肃层 | 中等规模（档内分档参数） | 最大回撤熔断、行业/风格暴露、流动性占比、隔夜系统性风险开关、实时监控告警 |
 
 > 风控基础层是回测撮合一部分，M1 即需就位。所有规则从 `TradingRuleProvider` 读取。组合优化器做连续解整数化，**风控做整数化后合法性最终校验**（避免双重修复不一致）。
@@ -462,7 +468,7 @@ TWAP/VWAP，按成交额与盘口深度自适应分片（零售通道有效性 M
 
 #### 4.7.3 A 股规则
 
-T+N（按品种）、按板块/类别/版本分支涨跌停、停牌跳过、申报数量规则、集合竞价时点、价格 tick、交易权限。
+当前阶段按沪深主板股票规则落地：T+1、主板/风险警示/新股窗口涨跌幅、停牌跳过、100 股整数倍申报、集合竞价时点、0.01 元价格 tick、交易权限。科创/创业/北交/ETF/可转债进入扩展范围前，必须先补规则 fixture 与 source_confidence。
 
 #### 4.7.4 绩效归因子系统
 
@@ -542,9 +548,76 @@ class Actor:
 - 结构化 JSON 日志，trace_id 全链路。
 - 指标落 SQLite（多账户维度）。
 - 告警（企业微信/邮件/Server酱）。
-- **三合一复盘报表**：价格+成交量+情绪+关键时点信号标注（Plotly/Streamlit）。
+- **三合一复盘报表**：价格+成交量+情绪+关键时点信号标注；生产 UI 走 Next.js 仪表盘，研究/离线可用 notebook/Plotly 辅助。
 - **配置热加载**：风控阈值/资金参数/因子权重支持盘中热加载（文件 watch + 校验生效）。
 - **灰度金丝雀**：新策略影子→小仓位→达标放量（成熟度档位→动态资金分配）。
+
+### 4.11 UI / 前端设计系统
+
+**职责**：为复盘、监控、交易终端、研究回测四类界面提供一致的金融平台 UI。前端以 `DESIGN.md` 为视觉配置源，落地到 Tailwind theme、基础组件与页面布局。
+
+#### 4.11.1 设计系统配置源
+
+- `DESIGN.md` 是 UI token 的权威来源，包含 `colors`、`typography`、`rounded`、`spacing`、`components` 与使用说明。
+- 前端实现只消费/映射这些 token：例如 Tailwind 颜色、字号、圆角、间距、按钮/表格/卡片组件；不得在业务页面随意新增近似色或一次性样式。
+- 若视觉策略调整，先改 `DESIGN.md`，再同步 theme/components；设计文档只记录约束，不复制完整 token 表。
+
+#### 4.11.2 视觉原则
+
+- 风格：深色金融交易平台，主画布 `canvas-dark`（#0b0e11），卡片 `surface-card-dark`（#1e2329），少量浅色交易表单/弹窗按 `canvas-light` 系列处理。
+- 品牌/强调色：`primary`（#FCD535）只用于主 CTA、关键状态、链接和高优先级强调；禁用状态使用 `primary-disabled`。
+- 交易语义：上涨/盈利/买入倾向使用 `trading-up`（#0ecb81），下跌/亏损/卖出倾向使用 `trading-down`（#f6465d）；价格方向优先用文字/数字颜色表达，避免把涨跌做成大面积背景。
+- 字体：优先使用 `DESIGN.md` 的 BinanceNova/BinancePlex 语义；实际开源替代为 Inter（正文/标题）+ IBM Plex Sans 或等价数字字体（价格、收益率、成交量）。
+- 形态：按钮 6px、输入/普通卡片 8px、主要容器 12px；仪表盘避免大圆角和装饰性渐变。
+- 密度：交易/监控界面保持紧凑、可扫描；复盘/研究页面允许图表区更宽，但仍使用同一间距标尺。
+
+#### 4.11.3 页面与组件映射
+
+| 页面 | 目标 | 主要组件 / token |
+|---|---|---|
+| `/monitor` | 盘中监控与告警 | `top-nav-dark`、`markets-table-card`、`price-up-cell`/`price-down-cell`、风险进度与告警色 |
+| `/trade` | 模拟/实盘交易终端 | `button-trading-up`、`button-trading-down`、`text-input-on-light`、订单/成交状态色 |
+| `/replay` | 三合一复盘 | 深色图表容器、价格/成交量/情绪曲线、信号关键点标注 |
+| `/research` | 因子评估与回测研究 | 指标卡、IC/IR/分层收益图、回撤与归因图 |
+
+#### 4.11.4 验收标准
+
+- 页面引用 theme token，不出现未登记的核心色值（少量图表库自动色除外）。
+- 组件测试覆盖基础视觉语义：涨跌颜色、按钮状态、交易输入边界、表格状态。
+- Next build 与前端测试通过；核心路由 `/monitor`、`/trade`、`/replay`、`/research` 可静态构建。
+- UI 不承诺营销页；首屏优先服务可操作仪表盘。
+
+### 4.12 前后端 API 层
+
+**职责**：把后端 `quant/` 领域能力暴露给 Next.js 前端。API 层只做协议转换、鉴权/环境门禁、错误映射与审计，不重写领域逻辑。
+
+#### 4.12.1 分期原则
+
+- **只读优先（M2.5）**：先打通行情/K线、账户、持仓、委托、成交、风险、告警、因子评价、回测结果、策略生命周期。
+- **下单延后（M4）**：真实下单 POST 必须等 live gate、kill switch、verified 规则、QMT/M2 模拟盘验收通过后才开放；M2.5 阶段 `/trade` 仍可保留模拟提示。
+- **契约单一来源**：响应字段与 `web/src/types/*` 对齐；后端 schema 变更必须带前端类型/测试同步。
+- **mock 降级**：`web/src/lib/mock/*` 只保留为测试 fixture 或显式 dev fallback，生产路径默认走 API client。
+
+#### 4.12.2 只读接口集合
+
+| 路由 | 用途 | 前端页面 |
+|---|---|---|
+| `GET /api/markets` | 主板 universe 行情表 | `/monitor`、首页 |
+| `GET /api/kline?symbol=&freq=&start=&end=` | K 线/成交量 | `/replay`、`/trade` |
+| `GET /api/account` | 多账户快照 | `/monitor`、`/trade` |
+| `GET /api/positions` | 持仓 | `/monitor`、`/trade` |
+| `GET /api/orders` / `GET /api/fills` | 委托/成交 | `/trade` |
+| `GET /api/risk` / `GET /api/alerts` | 风控状态/告警 | `/monitor` |
+| `GET /api/factor-eval` | 因子评价 | `/research` |
+| `GET /api/backtest` | 回测结果 | `/research` |
+| `GET /api/strategy-lifecycle` | 策略生命周期 | `/research`、`/monitor` |
+
+#### 4.12.3 API 验收标准
+
+- 后端 API 测试覆盖 200 响应、字段结构、错误响应、主板范围约束。
+- 前端 hooks 不再直接 import `web/src/lib/mock/*`；统一经 `web/src/lib/api/*`。
+- 四个核心路由在本地 API 启动后可展示后端返回数据，并有 loading/error/empty 状态。
+- 后端 `.venv/bin/pytest tests/quant -m "not network" -q`、前端 `npm test -- --run`、`npm run build` 通过后，才可声明前后端已对接。
 
 ---
 
@@ -554,7 +627,7 @@ class Actor:
 |---|---|---|
 | `MarketDataGateway` | subscribe/history/bar_at(PIT)/publish(BarEvent) | QMT/Tushare/AkShare |
 | `SentimentProvider` | sentiment/market_sentiment | 聚合指标/授权源/社媒(开关) |
-| `TradingRuleProvider` | rules_for(symbol, decision_time) 含 settlement | 官方规则表(独立子模块) |
+| `TradingRuleProvider` | rules_for(symbol, decision_time, require_verified) 含 settlement | 官方规则表(独立子模块) |
 | `DataQualityGate` | validate(dataset, record) → deny/pass | 独立验证层 |
 | `Factor`/`FactorRegistry` | compute/compute_panel(snapshot_id) | 因子后端 |
 | `Strategy`/`StrategyRunner` | on_bar/on_fill/run(account_id) | 各策略 |
@@ -568,6 +641,7 @@ class Actor:
 | `Attribution` | shapley/barra(CNE6) | 归因后端 |
 | `ExperimentTracker` | log(run, snapshot_id) | SQLite/MLflow |
 | `SecretManager` | get(key, env) | keyring/age |
+| `FrontendApi` | read-only REST endpoints + error contract | FastAPI/ASGI → Next.js API client |
 
 ---
 
@@ -599,8 +673,8 @@ CREATE TABLE agent_run (run_id TEXT PRIMARY KEY, phase TEXT, status TEXT, state 
 CREATE TABLE job_run (job_id TEXT PRIMARY KEY, kind TEXT, status TEXT, payload TEXT, ts INTEGER);
 CREATE TABLE trading_rule (rule_id TEXT PRIMARY KEY, market TEXT, board TEXT, product_type TEXT,
     effective_from DATE, effective_to DATE, source_url TEXT, source_confidence TEXT,   -- verified/pending/provisional
-    rule_json TEXT, reviewed_by TEXT, reviewed_ts INTEGER,
-    CHECK (no_overlap_per_product));   -- 区间不重叠约束
+    rule_json TEXT, reviewed_by TEXT, reviewed_ts INTEGER);
+-- effective 区间不重叠由应用层 check_no_overlap + loader 测试保证；SQLite CHECK 不能表达跨行约束。
 CREATE TABLE strategy_lifecycle (strategy TEXT PRIMARY KEY, status TEXT, approved_by TEXT,
     approved_ts INTEGER, monitoring_metrics TEXT, degraded_reason TEXT);
 CREATE TABLE source_audit (id INTEGER PRIMARY KEY, source TEXT, dataset TEXT, status TEXT,
@@ -623,7 +697,7 @@ CREATE TABLE tick (symbol VARCHAR, event_ts BIGINT, received_ts BIGINT, price DO
 CREATE TABLE pit_field (field VARCHAR PRIMARY KEY, source VARCHAR, available_at_rule VARCHAR);
 CREATE TABLE factor_snapshot (snapshot_id VARCHAR PRIMARY KEY, created_ts BIGINT, as_of_cap BIGINT, note VARCHAR);
 CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR,
-    as_of BIGINT, row_count BIGINT, checksum VARCHAR, PRIMARY KEY(snapshot_id, dataset));
+    as_of_cap BIGINT, row_count BIGINT, checksum VARCHAR, PRIMARY KEY(snapshot_id, dataset));
 ```
 
 **写并发策略**：
@@ -642,7 +716,7 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
       ──► [事件总线 publish(BarEvent)]
       ──► 因子计算(ProcessPool offload, PIT, 增量截面) ──► 回 asyncio
       ──► 策略 on_bar(BarContext, account_id)(信号+止损止盈)
-      ──► 信号仲裁 ──► 组合优化(整数化,多lot) ──► 风控 check(T+N,止损止盈)
+      ──► 信号仲裁 ──► 组合优化(主板100股整数化) ──► 风控 check(T+1,止损止盈)
       ──► Broker(QMT/模拟, per-account, on_fill异步) ──► 成交回写(独立写线程)
       ──► 持仓/审计 ──► 指标/复盘   (tick 同步落 WAL→DuckDB)
 ```
@@ -683,13 +757,13 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | 特性 | 实现层 | 处理 |
 |---|---|---|
 | 交易规则版本 | 数据层+风控+撮合 | `trading_rule` 按 effective 区间生效；人工 golden cases 回归 |
-| **结算 T+N** | 风控+撮合 | **per-product**：股票 T+1、可转债 T+0、部分 ETF T+0，从 rules.settlement 取 |
-| 涨跌幅 | 撮合+风控 | 主板/创业/科创/北交/风险警示/新股窗口按规则表分支 |
-| 新股无涨跌幅窗口 | 撮合+风控 | 沪深注册制前 5 日、北交所主要上市首日；按上市日计算 |
+| **结算 T+N** | 风控+撮合 | 当前主板股票 T+1，从 rules.settlement 取；per-product 扩展口保留 |
+| 涨跌幅 | 撮合+风控 | 当前主板/风险警示/新股窗口按规则表分支；创业/科创/北交后续补 |
+| 新股无涨跌幅窗口 | 撮合+风控 | 沪深主板注册制前 5 日；按上市日计算 |
 | 一字板封单 | 撮合 | 封死 = 无法成交 |
 | 集合竞价 | 撮合 | 9:15-9:25 开盘、14:57-15:00 收盘；不可撤单窗口按规则表 |
-| 申报价格最小变动单位 | 撮合+风控 | 沪深 A 股股票 0.01 元；ETF/基金/可转债另表 |
-| 申报数量规则 | 组合优化+风控 | 主板/创业 100 倍、科创 200 起、北交 100 起递增 1；多 lot 建模 |
+| 申报价格最小变动单位 | 撮合+风控 | 当前主板股票 0.01 元；ETF/基金/可转债后续另表 |
+| 申报数量规则 | 组合优化+风控 | 当前主板 100 股整数倍；科创/北交等后续扩展 |
 | 停牌/ST/退市（含整理期） | 基础数据+风控 | 标志+剔除 |
 | 除权除息扭曲 | 因子层 | 量价因子默认不复权+corporate action 调整；前复权须标注元数据 |
 | 过户费 | 撮合 | **provisional**（待中国结算原文快照），按市场/品种/生效日配置 |
@@ -738,7 +812,7 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | 单元 | 因子计算（含中性化）、风控规则、订单状态机、撮合器、组合优化器、DSL 解释器 |
 | 防过拟合 | walk-forward、**BH-FDR（分母=预算数）**、**锁死 holdout（一次性永久锁）**、新颖性 0.5-0.7、已知因子百科查重 |
 | PIT/look-ahead | **运行时锚**（available_at ≤ decision_time）+ 静态 AST 扫描 + **因子代码强制经 ctx**（禁直接读库） |
-| 交易规则验证 | 沪深/创业/科创/北交/ETF 的 tick/数量/涨跌幅/费用/**结算 T+N**/**可转债 T+0** fixture（人工 golden cases） |
+| 交易规则验证 | 当前沪深主板股票 tick/数量/涨跌幅/费用/结算 T+1 fixture（人工 golden cases）；其他板块/品种进入扩展前补 fixture |
 | 回测可复现 | 同 snapshot_id 两次运行结果一致；回填段打标验证 |
 | 回测验证 | 已知历史事件符合预期；撮合现实性；bar 级与盘口级分开标记 |
 | 模拟盘验证 | QMT 模拟 ≥ 1 月，对比回测预期 |
@@ -758,14 +832,15 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 |---|---|---|
 | **M-1a 本地快速探测（1-3 天，go/no-go）** | DuckDB 横截面查询延迟（全市场×200 因子×N 天）；SQLite 单写队列吞吐；exchange_calendars 调休覆盖；**DSL 解释器能否跑通 rolling+rank+group_neutral 真实因子**；免费数据源字段完整性+PIT 可推导性；中文金融情绪模型（Chinese-FinBERT）效果 | 全本地无外部依赖；性能/字段/DSL 三项达标 → go |
 | **M-1b 外部通道探测（数周，并行）** | xtquant 开户（低门槛券商优先）、订阅频率、回调线程、下单延迟、客户端崩溃恢复、拆单成交质量 | 可开户/订阅所需频率/下单延迟<阈值 → go；否则换通道 |
-| **M0 基础设施** | 骨架、配置（部分热加载）、SQLite+DuckDB+Repository（多账户）、ProviderRegistry、事件总线、日志/指标、日历（调休）、基础数据、PIT 字段+事实字段、`trading_rule`、数据质量独立验证层 | 读写+PIT 断言+规则按日取值+质量门禁拦截+多账户隔离；单测通过 |
-| **M0.5 交易规则子模块** | 规则表 v1 录入（沪深 A 股+科创/创业/北交+ETF，2020 至今）+ **人工 golden cases 标注** + 三方校对 + 区间查询正确性 + source_confidence 体系 | fixture 100% 通过；区间查询无重叠命中；过户费等无权威项标 provisional 且阻断实盘 |
-| **M1 回测+因子+基础风控** | 因子引擎（中性化评价）+ 基础因子、回测引擎（撮合/摩擦/A 股规则/一字板/T+N）、风控基础层、PIT 强制、snapshot 可复现、绩效归因（Shapley 简化版） | 工程正确性：规则 fixture 100%、look-ahead 0 报警、已知历史事件回放符合预期、同 snapshot 二次运行一致、连续 3 年（2020+）无异常；基准绩效仅 sanity check（不劣于同 universe buy-and-hold -X%） |
-| **M1.5 策略引擎** | Strategy/on_fill、多策略调度+隔离、组合优化器（多 lot+gap 度量）、止损止盈、策略生命周期、再平衡、事件驱动模板、ctx 契约 | 多策略并行回测；优化约束满足；QP-vs-整数化 gap < 阈值；换手 ≤ 配置上限；生命周期状态机可迁移 |
+| **M0 基础设施** | 骨架、配置（部分热加载）、SQLite+DuckDB+Repository（多账户）、ProviderRegistry、事件总线、日志/指标、日历（调休）、基础数据、PIT 字段+事实字段、`trading_rule`、数据质量独立验证层、UI theme 从 `DESIGN.md` 映射 | 读写+PIT 断言+规则按日取值+质量门禁拦截+多账户隔离；单测通过；前端 theme/components 测试通过 |
+| **M0.5 交易规则子模块** | 规则表 v1 录入（沪深主板股票，2020 至今）+ **人工 golden cases 标注** + 三方校对 + 区间查询正确性 + source_confidence 体系；科创/创业/北交/ETF/可转债列为后续扩展 | 主板 fixture 100% 通过；区间查询无重叠命中；过户费等无权威项标 provisional 且阻断实盘 |
+| **M1 回测+因子+基础风控** | 因子引擎（中性化评价）+ 基础因子、回测引擎（撮合/摩擦/主板 A 股规则/一字板/T+1）、风控基础层、PIT 强制、snapshot 可复现、绩效归因（Shapley 简化版） | 工程正确性：主板规则 fixture 100%、look-ahead 0 报警、已知历史事件回放符合预期、同 snapshot 二次运行一致、连续 3 年（2020+）无异常；基准绩效仅 sanity check（不劣于同 universe buy-and-hold -X%） |
+| **M1.5 策略引擎** | Strategy/on_fill、多策略调度+隔离、组合优化器（主板 100 股整数化+gap 度量）、止损止盈、策略生命周期、再平衡、事件驱动模板、ctx 契约 | 多策略并行回测；优化约束满足；QP-vs-整数化 gap < 阈值；换手 ≤ 配置上限；生命周期状态机可迁移 |
 | **M2 模拟盘主线（多账户）** | 行情网关（线程桥接+事件总线+背压+去重）、Broker（SimBroker+QmtBroker per-account）、on_fill、xtquant 崩溃处理、DuckDB 写权交接、每日对账 | QMT 模拟**连续 20 交易日**（按日历，容忍 0 中断）跑通信号→下单→持仓→对账闭环；对账差异 < 0.1%；多账户隔离正确 |
+| **M2.5 前后端只读 API bridge** | 后端 HTTP API + 前端 API client；替换 `/monitor`、`/replay`、`/research`、`/trade` 的 mock hooks；补 loading/error/empty；真实下单 POST 继续关闭 | 四页面展示后端真实返回数据；mock 仅作测试/dev fallback；后端 API 测试 + 前端测试/build 通过 |
 | **M3 情绪+单 agent 挖掘** | 情绪一期（聚合指标，北向/两融标"不宜反向"）、3a 单 agent（DSL+解释器）、实验追踪、市场宽度因子策略 | **工程 Done**：管线端到端可复现、门禁生效、实验落库；**命题裁决（go/no-go 报告）**：通过全门禁因子数、OOS IC 分布、与已知因子相关性；0 因子 → M6 暂缓 |
 | **M4 实盘（多账户）** | 风控严肃层（档内分档）、拆单、告警、影子模式→小资金实盘、一致性校验（snapshot 重放）、灰度金丝雀 | **连续 20 交易日实盘对账差异 < 0.1%、最大回撤 < 配置阈值、滑点偏差 < 校准带** |
-| **M5a 情景模拟与复盘（⑧）** | 反事实回放（边界声明）、次日情景（GARCH/DCC+过撮合）、每日复盘、三合一报表 | 复盘报告自动生成；GARCH/DCC 校准通过；VaR 95%/99% 回测覆盖率达阈值 |
+| **M5a 情景模拟与复盘（⑧）** | 反事实回放（边界声明）、次日情景（GARCH/DCC+过撮合）、每日复盘、三合一报表/复盘 UI | 复盘报告自动生成；GARCH/DCC 校准通过；VaR 95%/99% 回测覆盖率达阈值；复盘 UI 遵循 `DESIGN.md` token |
 | **M5b 主体行为学习（⑨）** | Actor 样本库（标签=PnL）、三路学习（按 actor 切 OOS）、标准门禁 | 行为因子经标准门禁（BH-FDR+新颖性+经济显著+人审）入库；M3 同一门禁 |
 | **M6 multi-agent + 社媒（可选，依赖 M3 命题 go）** | 3b multi-agent 闭环（子进程沙箱）、情绪二期（社媒，合规开关） | multi-agent 闭环可恢复 ≥ 50 轮；社媒因子增量贡献显著（用户显式开启后） |
 
@@ -781,7 +856,8 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | 数据处理 | pandas/numpy/numba |
 | 存储 | SQLite(WAL)（事务）+ DuckDB（行情/因子/tick 分析） |
 | 并发 | asyncio（盘中调度）+ ProcessPool（因子/策略 CPU offload）+ 独立写线程（SQLite）|
-| 组合优化 | cvxpy（QP/OSQP）+ 多 lot 建模；MIQP（SCIP/Gurobi 可选） |
+| 后端 API | FastAPI/ASGI（只做协议转换与门禁，不重写领域逻辑） |
+| 组合优化 | cvxpy（QP/OSQP）+ 主板 100 股整数化；多 lot/MIQP（SCIP/Gurobi）作为后续扩展 |
 | 情景模拟 | GARCH/EGARCH-t + DCC（arch 库或自实现） |
 | 调度 | cron/systemd timer + 交易日历 wrapper（**移除 APScheduler**） |
 | LLM | DeepSeek（主）、Claude/GPT（可选） |
@@ -790,9 +866,10 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | NLP（情绪） | Chinese-FinBERT（中文金融语料，M-1a 验证）/ 规则兜底 |
 | 实验追踪 | 自建 SQLite experiment 表（含 snapshot_id）→ MLflow |
 | 密钥 | keyring（环境 namespace）+ age/gpg fallback + 环境互斥锁 |
-| 可视化 | Plotly/Streamlit（三合一复盘报表） |
+| 前端/UI | Next.js + TypeScript + Tailwind；`DESIGN.md` 映射 theme/components；TanStack Query；lightweight-charts/recharts |
+| 可视化 | 生产 UI 用 Next.js 仪表盘；研究/离线报表可辅以 Plotly/notebook |
 | 配置 | YAML/TOML（部分热加载） |
-| 测试 | pytest |
+| 测试 | pytest；Vitest/Testing Library；Next build |
 
 ---
 
@@ -889,12 +966,12 @@ class ProviderRegistry:
 
 | 主题 | 当前结论 | 来源 / 状态 |
 |---|---|---|
-| 上交所规则 | 2026 修订 2026-07-06 生效，当前不得当已生效硬编码 | sse.com.cn 官方页（**pending**，M-1a 快照） |
-| 北交所规则 | 2026 修订 2026-07-06 施行，涨跌幅/数量独立建表 | bseinfo.net（**pending**） |
-| 深交所规则 | M-1a 下载保存当前有效 + 2026 修订，不得只按上交所推断 | szse.cn（**pending**，旧 PDF URL 非现行） |
-| 价格最小变动单位 | 沪深 A 股股票 0.01 元；ETF/基金/可转债另表 | rule_json.price_tick by product_type |
-| 申报数量 | 主板/创业、科创、北交不同 | rule_json.quantity_rule + fixture |
-| 新股无涨跌幅 | 沪深前 5 日、北交主要首日 | rule_json.no_limit_window |
+| 上交所主板规则 | 当前只取主板股票有效规则；2026 修订 2026-07-06 生效，当前不得当已生效硬编码 | sse.com.cn 官方页（**pending**，M-1a 快照） |
+| 深交所主板规则 | 当前只取主板股票有效规则；M-1a 下载保存当前有效 + 2026 修订，不得只按上交所推断 | szse.cn（**pending**，旧 PDF URL 非现行） |
+| 北交所/科创/创业/ETF/可转债规则 | 不进入当前阶段实盘范围；后续扩展前单独补来源快照、fixture 与验收 | bseinfo.net / sse.com.cn / szse.cn（**deferred**） |
+| 价格最小变动单位 | 当前主板股票 0.01 元；ETF/基金/可转债后续另表 | rule_json.price_tick by product_type |
+| 申报数量 | 当前主板 100 股整数倍；科创/北交等后续另表 | rule_json.quantity_rule + fixture |
+| 新股无涨跌幅 | 当前沪深主板注册制前 5 日；北交等后续另表 | rule_json.no_limit_window |
 | 印花税 | 2023-08-28 减半，卖方 0.05%，配置化 | 税务总局公告（**verified**） |
 | 过户费 | **provisional**，待中国结算原文快照确认 | 新华社/人民网转载（**provisional**，实盘前须升级 verified） |
 
@@ -952,7 +1029,7 @@ class ProviderRegistry:
 - **holdout 段**：锁死真 OOS，一次性永久锁，forward-walking 出新 holdout。
 - **BH-FDR**：Benjamini-Hochberg 错误发现率校正，分母用假设预算数。
 - **新颖性检验**：因子值 Spearman + 收益预测相关双查 > 0.5-0.7 拒绝；含已知因子百科查重。
-- **T+N 结算**：per-product 结算周期（股票 T+1、可转债 T+0 等）。
+- **T+N 结算**：接口保留 per-product 结算周期；当前阶段只做主板股票 T+1，其他品种后续扩展。
 - **Actor**：行为主体（游资/自己/北向/机构）。
 - **反事实回放**：改写决策观察差异；仅自身小单扰动保证撮合一致。
 - **Shapley 归因**：公平分配多相关因子贡献的归因法。
@@ -970,3 +1047,6 @@ class ProviderRegistry:
 | v0.3 | §14 数据源选型清单（免费优先、Provider+YAML 可替换） |
 | v0.4 | 交易规则版本化、A股规则修正、PIT 事实字段、因子版本/假设预算、M1 工程正确性验收、§15 官方规则来源 |
 | **v0.5** | **四维度红队吸收**：一期宣称诚实化（市场宽度非散户情绪）、T+N per-product、多账户、因子中性化评价、factor_snapshot_id 可复现、PIT 实时/回填分级、组合优化标量化+gap、GARCH/DCC 情景、行为学习标签PnL+标准门禁、分层并发(ProcessPool+独立写线程+DuckDB交接)、DSL手写解释器沙箱、M-1拆a/b、TradingRule独立M0.5、§16数据合规、止损止盈/生命周期/再平衡/事件总线/bar去重/策略隔离、移除APScheduler、§15 URL状态列+过户费provisional |
+| **v0.5-ui** | 将根目录 `DESIGN.md` 纳入系统设计，作为 UI token 与组件风格的权威配置源；补 §4.11 UI/前端设计系统、技术栈与路线图验收口径 |
+| **v0.5-scope** | 当前阶段交易范围收窄为沪深主板股票；科创/创业/北交/ETF/可转债作为后续扩展，须补规则来源、fixture 与验收后再进入实盘 |
+| **v0.5-api** | 补前后端 API 层、M2.5 只读 API bridge、`rules_for(require_verified)`、`data_snapshot.as_of_cap` 与 `trading_rule` no-overlap 应用层约束 |

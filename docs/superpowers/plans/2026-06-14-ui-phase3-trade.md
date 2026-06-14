@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 14 · TS · Tailwind · TanStack Query（无新依赖）
 
-**关联：** DESIGN.md · v0.5 §4.6（执行层/订单状态机）、§4.5（风控 T+N/涨跌停过滤）、§4.4.1（Signal/on_fill）
+**关联：** DESIGN.md · v0.5 §4.6（执行层/订单状态机）、§4.5（当前主板 T+1/涨跌停过滤）、§4.4.1（Signal/on_fill）
 
 **前置：** UI Phase 1/2 完成（`feat/ui-phase1`）。本 Phase 继续此分支。下单交互用 mock（不接真实 broker；实盘在 M2/M4）。
 
@@ -94,6 +94,6 @@ export interface AccountSnapshot { account_id: string; cash: number; market_valu
 
 1. **Spec 覆盖**：行情K线/下单/账户/委托/成交 → Task 1-4 ✓
 2. **复用**：KlineChart/PositionsTable/StatCard/PriceCell/Button 复用 ✓
-3. **DESIGN.md**：trading-up/down 买卖按钮、surface-card-dark、number 字体、涨跌停/T+N 提示（mock 阶段标注"模拟"）✓
+3. **DESIGN.md**：trading-up/down 买卖按钮、surface-card-dark、number 字体、涨跌停/主板 T+1 提示（mock 阶段标注"模拟"）✓
 4. **mock**：不接真实 broker；onSubmit 本地 state + "模拟下单"提示 ✓
 5. **已知**：真实下单/风控在 M2/M4；A 股 T+1/涨跌停/最小单位在 OrderForm 提示但不强制（mock）

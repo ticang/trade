@@ -48,23 +48,6 @@ RULE_MAIN = {
     },
 }
 
-# 科创板：±20%、min_buy 200、lot_increment 1
-RULE_STAR = {
-    "tick": 0.01,
-    "daily_limit_up": 0.20,
-    "daily_limit_down": 0.20,
-    "settlement_T": 1,
-    "min_buy": 200,
-    "lot_increment": 1,
-    "fees": {
-        "stamp": {"value": 0.0005, "_confidence": "provisional"},
-        "transfer": {"value": 0.00001, "_confidence": "provisional"},
-        "commission": {"value": None, "_confidence": "provisional"},
-        "exchange": {"value": None, "_confidence": "provisional"},
-    },
-}
-
-
 def _day_end(d: _dt.date) -> _dt.datetime:
     """trade_date 当日 16:00（收盘后决策时刻）。"""
     return _dt.datetime.combine(d, _dt.time(hour=16, minute=0))
@@ -85,11 +68,11 @@ def store(tmp_db):
 
 
 def test_m1_rule_fixtures_load_and_apply(store):
-    """§11 验收 1：load_rules 加载全部 10 条种子，golden 事实经 SimBroker 验证。
+    """§11 验收 1：load_rules 加载当前主板规则，golden 事实经 SimBroker 验证。
 
     - 600519（沪市主板）命中 sse_main_stock：±10%、T+1、min_buy 100、lot 100
-    - 688981（科创板）命中 sse_star_stock：±20%、min_buy 200、lot_increment 1
-    - 撮合尊重规则：科创 min_buy 200，买单 100 → illegal_lot 被拒
+    - 688981（科创板）当前延期，不命中规则
+    - 撮合尊重规则：主板非 100 股整数倍买单 → illegal_lot 被拒
     - 沪市主板买单 100（满足 min_buy）+ 正常 bar → 成交
     """
     p = TradingRuleProvider(store)
@@ -104,24 +87,19 @@ def test_m1_rule_fixtures_load_and_apply(store):
     assert main_json["lot_increment"] == 100
     assert main_json["settlement_T"] == 1
 
-    # 科创板 golden
-    sse_star = p.rules_for("688981", when, require_verified=False)
-    assert sse_star is not None
-    star_json = json.loads(sse_star.rule_json)
-    assert star_json["daily_limit_up"] == 0.20
-    assert star_json["min_buy"] == 200
-    assert star_json["lot_increment"] == 1
+    # 科创板为后续扩展；当前规则种子不命中。
+    assert p.rules_for("688981", when, require_verified=False) is None
 
-    # 撮合验证：科创 min_buy 200，买单 100 → illegal_lot
+    # 撮合验证：主板 100 股整数倍；买单 150 → illegal_lot
     broker = SimBroker()
     prev_close = 50.0
     bar_normal = BarSnapshot(
         open=prev_close, high=prev_close * 1.02, low=prev_close * 0.98,
         close=prev_close, volume=1_000_000.0,
-        limit_up=prev_close * 1.20, limit_down=prev_close * 0.80,
+        limit_up=prev_close * 1.10, limit_down=prev_close * 0.90,
     )
-    too_small = Order(symbol="688981", side="buy", qty=100, order_type="market")
-    res = broker.match(too_small, bar_normal, star_json, position_qty=0)
+    bad_lot = Order(symbol="600519", side="buy", qty=150, order_type="market")
+    res = broker.match(bad_lot, bar_normal, main_json, position_qty=0)
     assert not res.filled
     assert res.reason == "illegal_lot"
 

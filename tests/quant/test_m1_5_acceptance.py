@@ -1,7 +1,7 @@
 """M1.5 集成验收测试（设计 v0.5 §11 M1.5 验收 6 条，capstone）。
 
 端到端串起 M1.5：StrategyRunner（多策略隔离+冲突裁决）→ PortfolioOptimizer
-（cvxpy QP + 多 lot 整数化 + gap）→ RebalancePolicy/stop_loss_signals →
+（cvxpy QP + 主板 100 股整数化 + gap）→ RebalancePolicy/stop_loss_signals →
 StrategyLifecycle（8 态状态机）。合成数据驱动，确定性可重跑。
 对应设计 §11 的 6 条 M1.5 验收条目，每条至少一个测试函数。
 """

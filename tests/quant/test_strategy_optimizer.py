@@ -1,7 +1,7 @@
-"""M1.5 组合优化器契约测试：cvxpy QP + 多 lot 整数化 + gap（§4.4.3）。
+"""M1.5 组合优化器契约测试：cvxpy QP + 主板 100 股整数化 + gap（§4.4.3）。
 
 标量化目标 max α'w − λ·TE² − γ·turnover，约束单票上限/换手率，
-连续 QP 解 → 多 lot 整数化启发式 → gap 量化整数化损失。
+连续 QP 解 → lot 整数化启发式 → gap 量化整数化损失。
 """
 import numpy as np
 
@@ -42,7 +42,7 @@ def test_continuous_satisfies_constraints():
         assert v <= config.max_single + 1e-4
 
 
-def test_integerization_multi_lot():
+def test_integerization_mainboard_lot():
     # 整数化后权重仍 sum≈1（整数 lot 归一），单票不超过 max_single
     config = OptimizerConfig(max_single=0.50)
     opt = PortfolioOptimizer(config)

@@ -1,7 +1,7 @@
 """交易规则 Provider：按 symbol + 决策时刻查询生效中的交易规则。
 
 设计 v0.5 §4.1.3/§6：
-- classify_symbol：symbol→(market,board,product_type) 简化映射（M0，M0.5 完善）
+- classify_symbol：当前阶段仅支持沪深主板股票；其他板块/品种返回 unsupported
 - rules_for：按 effective_from <= decision_time < effective_to 命中区间行，
   反序列化 rule_json 装 TradingRule 返回；无命中返回 None
 - check_no_overlap：校验同 (market,board,product_type) 区间不重叠
@@ -20,38 +20,24 @@ from quant.data.sqlite_store import SqliteStore
 
 
 def classify_symbol(symbol: str) -> tuple[str, str, str]:
-    """symbol→(market,board,product_type) 简化映射。
+    """symbol→(market,board,product_type) 当前范围映射。
 
-    A 股前缀规则（设计 v0.5 §4.1.3）：
-    - 688xxx→(SSE,star,stock)  科创板
+    最新设计文档把当前交易范围收窄为沪深主板股票：
     - 6xxxxx→(SSE,main,stock)  沪市主板
-    - 30xxxx→(SZSE,chinext,stock)  创业板
     - 00xxxx→(SZSE,main,stock)  深市主板
-    - 8xxxxx/9xxxxx→(BSE,main,stock)  北交所
-    - 以 5 开头→(ETF,etp,fund)  基金（简化）
-    - 可转债独立代码段：11x/113x/123x→(BOND,bond,bond)
-    - 其他→(SSE,main,stock)  默认
+    - 其他板块/品种→(UNSUPPORTED,unsupported,unsupported)
 
-    ST/退市/跨境 ETF 等时变或基础数据维度无法从前缀推断，
-    须用 classify_with_instrument 配合 instrument 数据精分类。
+    科创/创业/北交/ETF/可转债保留为后续扩展，补齐规则来源和
+    fixture 后再进入默认路由。
     """
     s = symbol.strip()
-    # 可转债：沪市 11x、深市 123x、公募可交债 113x 等（设计 §4.1.3）
-    if s.startswith(("110", "113", "123")):
-        return ("BOND", "bond", "bond")
     if s.startswith("688"):
-        return ("SSE", "star", "stock")
+        return ("UNSUPPORTED", "unsupported", "unsupported")
     if s.startswith("6"):
         return ("SSE", "main", "stock")
-    if s.startswith("30"):
-        return ("SZSE", "chinext", "stock")
     if s.startswith("00"):
         return ("SZSE", "main", "stock")
-    if s.startswith("8") or s.startswith("9"):
-        return ("BSE", "main", "stock")
-    if s.startswith("5"):
-        return ("ETF", "etp", "fund")
-    return ("SSE", "main", "stock")
+    return ("UNSUPPORTED", "unsupported", "unsupported")
 
 
 def classify_with_instrument(
@@ -66,6 +52,7 @@ def classify_with_instrument(
       * instrument[symbol].etf_crossborder → board 改 'etp_crossborder'
       （ST 与跨境 ETF 互斥：跨境 ETF 无 ST，优先级不影响结果）
     - 否则（instrument 为 None 或 symbol 未命中）回退 classify_symbol(symbol)。
+      回退只支持沪深主板，其他板块/品种返回 unsupported。
     """
     if instrument is None:
         return classify_symbol(symbol)

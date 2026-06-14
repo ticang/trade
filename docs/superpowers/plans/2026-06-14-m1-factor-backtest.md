@@ -44,7 +44,7 @@ quant/
 │   └── attribution.py         # 绩效归因（Shapley 简化版 / 回归归因）
 └── risk/
     ├── __init__.py
-    └── engine.py              # RiskEngine.check（仓位/T+N/涨跌停停牌ST退市/tick数量/止损止盈）
+    └── engine.py              # RiskEngine.check（仓位/主板T+1/涨跌停停牌ST退市/tick数量/止损止盈）
 tests/quant/{factor,backtest,risk}/...
 ```
 
@@ -104,8 +104,8 @@ tests/quant/{factor,backtest,risk}/...
 
 ### Task C2: SimBroker 撮合
 **Files:** `quant/backtest/sim_broker.py`, `tests/quant/backtest/test_sim_broker.py`
-- [ ] `SimBroker`（Broker Protocol，is_synchronous=True）：`place(order)` 事件驱动撮合。限价按盘口/量比（无 L2 保守概率，标 bar_level_simulated）；市价按次日开盘/bar+滑点；**一字板封死=不成交**；成交不超当日量比例；申报价格/数量合法性（tick/lot 从 rules）；T+N（卖 T+1 股票需有持仓）；收盘集合竞价撮合。规则从 TradingRuleProvider 按当日生效版取。
-- [ ] 测试：限价成交/不成交、一字板拒、量比限制、T+N 卖出约束、tick/lot 合法性。
+- [ ] `SimBroker`（Broker Protocol，is_synchronous=True）：`place(order)` 事件驱动撮合。限价按盘口/量比（无 L2 保守概率，标 bar_level_simulated）；市价按次日开盘/bar+滑点；**一字板封死=不成交**；成交不超当日量比例；申报价格/数量合法性（tick/lot 从 rules）；当前主板 T+1（卖出需有持仓）；收盘集合竞价撮合。规则从 TradingRuleProvider 按当日生效版取。
+- [ ] 测试：限价成交/不成交、一字板拒、量比限制、T+1 卖出约束、tick/lot 合法性。
 - [ ] commit `add sim broker with a-share matching rules`
 
 ### Task C3: BacktestEngine 事件循环
@@ -120,7 +120,7 @@ tests/quant/{factor,backtest,risk}/...
 
 ### Task D1: RiskEngine
 **Files:** `quant/risk/engine.py`, `tests/quant/risk/test_engine.py`
-- [ ] `RiskEngine.check(orders, account_id, positions, rules) -> RiskResult`：单票/总仓位上限、T+N 结算（从 rules.settlement）、涨跌停/停牌/ST/退市过滤、tick/数量合法性、止损/止盈/跟踪止损、单笔金额上限。整数化后合法性最终校验。所有规则从 TradingRuleProvider 读。
+- [ ] `RiskEngine.check(orders, account_id, positions, rules) -> RiskResult`：单票/总仓位上限、当前主板 T+1 结算（从 rules.settlement）、涨跌停/停牌/ST/退市过滤、tick/数量合法性、止损/止盈/跟踪止损、单笔金额上限。整数化后合法性最终校验。所有规则从 TradingRuleProvider 读。
 - [ ] 测试：超仓位拒、T+1 卖无持仓拒、涨跌停价外拒、tick 不合法拒、止损触发；全过即 RiskResult.passed。
 - [ ] commit `add basic risk engine`
 
@@ -139,7 +139,7 @@ tests/quant/{factor,backtest,risk}/...
 - [ ] 对应 §11 M1 验收 6 条：
   1. 规则 fixture 100%（复用 M0.5 golden 规则跑回测撮合）
   2. **look-ahead 0 报警**（构造 future-available_at 数据，回测/因子访问应抛 LookAheadError 或 0 泄漏）
-  3. 已知历史事件回放（合成一字板/T+N 场景，撮合符合预期）
+  3. 已知历史事件回放（合成一字板/主板 T+1 场景，撮合符合预期）
   4. **同 snapshot 二次运行一致**（同 snapshot_id 跑两次，结果逐字段相等）
   5. 连续 3 年（2020+）合成数据无异常跑通
   6. 基准绩效 sanity（等权策略不劣于 buy-and-hold -X%，合成数据）
@@ -154,7 +154,7 @@ tests/quant/{factor,backtest,risk}/...
 
 ## Self-Review
 
-1. **Spec 覆盖**（§11 M1）：因子引擎中性化评价（Phase A+B）✓ + 基础因子（A3）✓ + 回测撮合/摩擦/A股规则/一字板/T+N（Phase C）✓ + 风控基础层（D）✓ + PIT强制（A1+C3，§4.7.6）✓ + snapshot可复现（A4）✓ + 绩效归因Shapley简化（E1）✓ + §11 验收6条（E2）✓
+1. **Spec 覆盖**（§11 M1 + v0.5-scope）：因子引擎中性化评价（Phase A+B）✓ + 基础因子（A3）✓ + 回测撮合/摩擦/主板A股规则/一字板/T+1（Phase C）✓ + 风控基础层（D）✓ + PIT强制（A1+C3，§4.7.6）✓ + snapshot可复现（A4）✓ + 绩效归因Shapley简化（E1）✓ + §11 验收6条（E2）✓
 2. **设计原则**：接口先行（Factor/Broker/RiskEngine Protocol）✓、PIT 分级（回填段 backtest_on_inferred_pit）✓、因子经 ctx 禁直接读库（A1，防 look-ahead）✓、snapshot 可复现 ✓、风控基础层 M1 就位（§4.5）✓
 3. **复用 M0/M0.5**：SqliteStore/DuckdbStore/Repository/PIT/TradingRuleProvider(golden规则)/Calendar/Clock 全复用
 4. **YAGNI**：归因 Shapley 占位、Barra CNE6 简化风格因子、numba 热点优化、ProcessPool offload 均延后（M1 先正确性）；DSL 算子/单 agent 挖掘留 M3

@@ -80,6 +80,10 @@ def test_classify_etf_crossborder():
 def test_classify_falls_back_when_symbol_missing():
     """classify：symbol 未在 instrument 中 → 回退 classify_symbol。"""
     provider = InstrumentProvider.from_seed()
-    # 688981 不在 seed（科创板块未录入）→ 走 classify_symbol 前缀映射
+    # 688981 不在 seed，且科创板为延期范围 → unsupported
     market, board, product_type = provider.classify("688981", date(2024, 6, 1))
-    assert (market, board, product_type) == ("SSE", "star", "stock")
+    assert (market, board, product_type) == (
+        "UNSUPPORTED",
+        "unsupported",
+        "unsupported",
+    )

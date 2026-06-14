@@ -1,6 +1,6 @@
 """rules_for 接 instrument_provider 测试（设计 v0.5 §4.1.3）。
 
-向后兼容：传 instrument_provider 时经其精分类（ST/可转债/跨境命中对应规则）；
+向后兼容：传 instrument_provider 时经其精分类（当前仅 ST 命中对应规则）；
 不传则走旧 classify_symbol。本文件验证两条路径并存不互扰。
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from quant.providers.trading_rule import TradingRuleProvider
 
 @pytest.fixture
 def store(tmp_db):
-    """起停 SqliteStore 并装入种子规则（含 st_main/convertible_bond/etf_crossborder）。"""
+    """起停 SqliteStore 并装入当前范围种子规则（沪深主板 + st_main）。"""
     sqlite_path, _ = tmp_db
     s = SqliteStore(str(sqlite_path))
     s.start()
@@ -65,8 +65,8 @@ def test_rules_for_st_routes_to_st_main(store):
     assert payload["daily_limit_down"] == 0.05
 
 
-def test_rules_for_convertible_bond_via_provider(store):
-    """传 instrument_provider（含可转债）→ rules_for 命中 convertible_bond（±20%/T+0）。"""
+def test_rules_for_convertible_bond_deferred(store):
+    """传 instrument_provider（含可转债）→ 当前规则种子不命中。"""
     t = datetime.date(2024, 6, 1)
     inst = Instrument(
         symbol="113001", market="BOND", board="bond", product_type="bond"
@@ -74,13 +74,7 @@ def test_rules_for_convertible_bond_via_provider(store):
     provider = InstrumentProvider(instruments={"113001": inst})
     p = TradingRuleProvider(store)
 
-    hit = p.rules_for("113001", t, instrument_provider=provider)
-    assert hit is not None
-    assert hit.rule_id == "convertible_bond"
-    payload = json.loads(hit.rule_json)
-    assert payload["daily_limit_up"] == 0.20
-    assert payload["settlement_T"] == 0
-    assert payload["tick"] == 0.001
+    assert p.rules_for("113001", t, instrument_provider=provider) is None
 
 
 def test_rules_for_backwards_compatible_without_provider(store):

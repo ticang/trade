@@ -4,7 +4,7 @@
 - 读 rules_v1.yaml → 写 trading_rule 表，字段对齐
 - rule_json 列存 JSON 字符串（YAML dict 经 json.dumps）
 - effective_to=null → SQL NULL；日期串原样存
-- 装载后 check_no_overlap 返回空（种子区间不重叠，ETF 两 board 已区分）
+- 装载后 check_no_overlap 返回空（当前范围：沪深主板股票 + ST 主板）
 - 幂等：连续 load 不翻倍
 - strict_overlap=True：写入后检测到区间冲突 → 抛 ValueError
 """
@@ -37,10 +37,10 @@ def _count(store: SqliteStore) -> int:
 
 
 def test_load_rules_populates_table(store):
-    """load_rules → trading_rule 表 10 行；抽 sse_main_stock 字段对。"""
+    """load_rules → trading_rule 表 3 行；抽 sse_main_stock 字段对。"""
     n = load_rules(store)
-    assert n == 10
-    assert _count(store) == 10
+    assert n == 3
+    assert _count(store) == 3
 
     rows = store.query_all(
         "SELECT rule_id, market, board, product_type, "
@@ -65,13 +65,13 @@ def test_rule_json_serialized(store):
     load_rules(store)
     rows = store.query_all(
         "SELECT rule_json FROM trading_rule WHERE rule_id = ?",
-        ("sse_star_stock",),
+        ("sse_main_stock",),
     )
     raw = rows[0]["rule_json"]
     assert isinstance(raw, str)  # 列存字符串非 BLOB
     rule = json.loads(raw)
     assert rule["tick"] == 0.01
-    assert rule["daily_limit_up"] == 0.20
+    assert rule["daily_limit_up"] == 0.10
     assert rule["settlement_T"] == 1
     # 费率嵌套结构保留
     assert "fees" in rule
@@ -80,24 +80,22 @@ def test_rule_json_serialized(store):
 
 
 def test_effective_to_null_handled(store):
-    """effective_to=null → SQL NULL；pre_reform 那条 effective_to='2020-08-23' 原样存。"""
+    """当前主板/ST 规则均为现行规则，effective_to=null → SQL NULL。"""
     load_rules(store)
 
-    null_rows = store.query_all(
-        "SELECT effective_to FROM trading_rule WHERE rule_id = ?",
-        ("sse_main_stock",),
+    rows = store.query_all(
+        "SELECT rule_id, effective_to FROM trading_rule ORDER BY rule_id",
     )
-    assert null_rows[0]["effective_to"] is None
-
-    pre_rows = store.query_all(
-        "SELECT effective_to FROM trading_rule WHERE rule_id = ?",
-        ("szse_chinext_stock_pre_reform",),
-    )
-    assert pre_rows[0]["effective_to"] == "2020-08-23"
+    assert {r["rule_id"] for r in rows} == {
+        "sse_main_stock",
+        "st_main",
+        "szse_main_stock",
+    }
+    assert all(r["effective_to"] is None for r in rows)
 
 
 def test_no_overlap_after_load(store):
-    """种子装载后 check_no_overlap(全部行) 返回空（含 ETF 两 board 已区分）。"""
+    """种子装载后 check_no_overlap(全部行) 返回空。"""
     load_rules(store)
     rows = store.query_all(
         "SELECT rule_id, market, board, product_type, "
@@ -108,10 +106,10 @@ def test_no_overlap_after_load(store):
 
 
 def test_load_is_idempotent(store):
-    """连续 load 两次，行数仍 10（INSERT OR REPLACE by rule_id）。"""
+    """连续 load 两次，行数仍 3（INSERT OR REPLACE by rule_id）。"""
     load_rules(store)
     load_rules(store)
-    assert _count(store) == 10
+    assert _count(store) == 3
 
 
 def test_strict_overlap_detects_conflict(store):
