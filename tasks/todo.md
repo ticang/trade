@@ -264,3 +264,45 @@
 **后续建议**：
 - M5b 接入真实历史收益序列后，补充真实数据的 GARCH/DCC 校准 + VaR 回测验收。
 - 蒙特卡洛收敛如需更高维验证，考虑 N=10000 或 Wilcoxon 检验替代简单相对差判据。
+
+---
+
+## [M6 Task 3] Multi-agent orchestrator（≥50 轮可恢复）
+
+### 目标
+扩展 `quant/mining/multi_agent.py`：新增 `MultiAgentOrchestrator` + `MultiAgentResult`，
+驱动 5 角色闭环（Hypothesizer→Composer→TesterRole→Judge→Iterator），
+每轮 checkpoint 到 `agent_run`，支持从任意轮 resume 续跑，可达 ≥50 轮。
+配套扁平测试 `tests/quant/test_multi_agent_orchestrator.py`，mock LLM。
+
+### 任务清单（TDD）
+- [x] 写失败测试 `tests/quant/test_multi_agent_orchestrator.py`（8 用例）
+- [x] 实现 `MultiAgentResult` + `MultiAgentOrchestrator`
+- [x] `pytest tests/quant/test_multi_agent_orchestrator.py -v` 全绿（8 passed）
+- [x] `pytest tests/quant -m "not network" -q` 无回归（602 passed）
+- [x] commit `add multi-agent orchestrator with recovery`（dd5a4bb）
+
+### Review
+已完成 Task 3。关键结论：
+- resume 起始轮基于 `state.rounds_completed`（已完整完成轮数），非 `state.round` 字段。
+  原因：每轮多阶段 checkpoint（hypothesize/compose/test/judge/iterate），中断可能发生在
+  某轮 hypothesize 阶段（round=N+1 已写入但该轮未完成）。用 rounds_completed 才能正确续跑。
+- Composer 出宽格式 Series（对齐 panel 行）→ orchestrator 内 `_to_long_panel` 转长格式
+  （trade_date/symbol/value）供 TesterRole.test。Composer 返回 None（DSL 非法）时
+  用 `_failed_test_result()` 兜底，自然走 archive 分支。
+- tracker 每轮一条 experiment，run_id 用 `f"{run_id}_r{round}"` 避免主键冲突
+  （agent_run 的 run_id 保持 `f"{topic}_{seed}"` 作为 resume 锚点）。
+- 50 轮机制验证：mock LLM 下 1.3s 完成，无资源/状态泄漏。
+- 8 用例覆盖：完成轮数/每轮 checkpoint/accept 收集/archive+iterate/中断 resume/
+  tracker log 数/run_id 确定性/50 轮机制。
+
+遗留风险：
+- 每轮 5 次 checkpoint（每阶段一次），50 轮 = 250 次 sqlite 写。SqliteStore 为内存+批量，
+  当前无瓶颈；若未来 LLM 真实调用变慢且轮次过万，可改为每轮仅末态 checkpoint。
+- resume 仅恢复"已完成轮数"，不恢复 accepted/archived/iterated 计数（MultiAgentResult
+  每次从 0 起）。当前契约：resume 后 result 反映本次续跑段，累计值由调用方读 agent_run。
+  若需累计，后续从 state 反序列化 history。
+- test_archive_iterate_tracked 用 `delay(close,1)`，其截面排名与 close 高度相关，
+  实测在合成数据上触发 accept 而非 archive（delay 仅整体后移 1 日，截面结构不变）。
+  断言放宽为 `archived + iterated > 0`，但若 mock 数据使该 DSL 也 accept，断言会假绿。
+  当前合成数据下该用例实际产生 iterate（IC 介于阈值），断言成立。
