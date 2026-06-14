@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import datetime
 import json
 
 import pytest
@@ -149,3 +150,28 @@ def test_default_rules_yaml_points_to_seed():
     """DEFAULT_RULES_YAML 指向 data/rules_v1.yaml 且文件存在。"""
     assert DEFAULT_RULES_YAML.name == "rules_v1.yaml"
     assert DEFAULT_RULES_YAML.exists()
+
+
+def test_seed_rule_blocked_for_live_path(store):
+    """种子规则结构 verified 但费用明细 provisional（§11）。
+
+    实盘（require_verified=True）应被阻断返回 None；
+    回测/展示（require_verified=False）命中返回规则。
+    """
+    load_rules(store)
+    p = TradingRuleProvider(store)
+    assert (
+        p.rules_for(
+            "600519",
+            datetime.date(2024, 6, 14),
+            require_verified=True,
+        )
+        is None
+    )
+    hit = p.rules_for(
+        "600519",
+        datetime.date(2024, 6, 14),
+        require_verified=False,
+    )
+    assert hit is not None
+    assert hit.rule_id == "sse_main_stock"

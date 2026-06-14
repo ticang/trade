@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import sqlite3
 from typing import Optional, Sequence
 
@@ -52,7 +53,11 @@ class TradingRuleProvider:
         self._store = store
 
     def rules_for(
-        self, symbol: str, decision_time: datetime.date | datetime.datetime
+        self,
+        symbol: str,
+        decision_time: datetime.date | datetime.datetime,
+        *,
+        require_verified: bool = False,
     ) -> Optional[TradingRule]:
         """查 symbol 在 decision_time 生效中的交易规则。
 
@@ -61,6 +66,12 @@ class TradingRuleProvider:
         effective_from <= decision_time < effective_to（effective_to 为 NULL 视为永不过期）。
         期望至多 1 行命中；多行取 effective_from 最大那条。
         无命中返回 None。
+
+        require_verified（实盘语义，设计 v0.5 §11）：
+        - False（默认，回测/展示）：命中即返回。
+        - True（实盘）：命中后若规则不可完全信任则返回 None 阻断实盘。
+          不可信任条件见 _is_live_ready（规则级 source_confidence 非 verified，
+          或 rule_json.fes 任一明细 _confidence=provisional）。
         """
         d = (
             decision_time.date()
@@ -85,8 +96,11 @@ class TradingRuleProvider:
         if not rows:
             return None
 
-        row = rows[0]
-        return _row_to_rule(row)
+        rule = _row_to_rule(rows[0])
+        # 实盘路径：不可完全信任则阻断（返回 None）
+        if require_verified and not _is_live_ready(rule):
+            return None
+        return rule
 
     def check_no_overlap(
         self, rows: Sequence[sqlite3.Row]
@@ -157,6 +171,31 @@ def _overlap_desc(
         f"规则 {a['rule_id']} [{a_from}, {a_to_raw}) "
         f"与 规则 {b['rule_id']} [{b_from}, {b_to_raw})"
     )
+
+
+def _is_live_ready(rule: TradingRule) -> bool:
+    """规则是否可完全信任（实盘准入，设计 v0.5 §11）。
+
+    不可完全信任（返回 False）当且仅当任一成立：
+    1. 规则级 source_confidence != "verified"（结构未权威）；或
+    2. rule_json.fees 中任一明细的 _confidence == "provisional"
+       （如过户费等无权威项，阻断实盘）。
+    fees 缺失或某明细无 _confidence 键均不视为 provisional，不阻断。
+    rule_json 解析失败按不可信任处理。
+    """
+    if rule.source_confidence != "verified":
+        return False
+    try:
+        payload = json.loads(rule.rule_json)
+    except (ValueError, TypeError):
+        return False
+    fees = payload.get("fees") if isinstance(payload, dict) else None
+    if not isinstance(fees, dict):
+        return True
+    for item in fees.values():
+        if isinstance(item, dict) and item.get("_confidence") == "provisional":
+            return False
+    return True
 
 
 def _row_to_rule(row: sqlite3.Row) -> TradingRule:

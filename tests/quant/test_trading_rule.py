@@ -7,13 +7,19 @@
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime
+import json
 
 import pytest
 
 from quant.data.models import TradingRule
 from quant.data.sqlite_store import SqliteStore
-from quant.providers.trading_rule import TradingRuleProvider, classify_symbol
+from quant.providers.trading_rule import (
+    TradingRuleProvider,
+    _is_live_ready,
+    classify_symbol,
+)
 
 
 @pytest.fixture
@@ -241,3 +247,133 @@ def test_check_no_overlap_detects_conflict(store):
         "effective_from, effective_to FROM trading_rule"
     )
     assert p.check_no_overlap(rows2) == []
+
+
+# ============================================================
+# require_verified：实盘阻断语义（设计 v0.5 §11 M0.5）
+# ============================================================
+# 实盘路径需规则完全可证（结构 + 费用均 verified）：
+# - 规则级 source_confidence != verified → 阻断
+# - rule_json.fees 任一明细 _confidence == provisional → 阻断
+# 回测/展示（require_verified=False）不阻断，命中即返回。
+
+
+def _insert_confidence(
+    store: SqliteStore,
+    rule_id: str,
+    source_confidence: str,
+    rule_json: dict,
+) -> None:
+    """插一条可指定 source_confidence 与 rule_json（含 fees 明细置信）的规则并 flush。"""
+    store.execute(
+        _INSERT_RULE,
+        (
+            rule_id,
+            "SSE",
+            "main",
+            "stock",
+            "2020-01-01",
+            None,
+            "http://example/rule",
+            source_confidence,
+            json.dumps(rule_json, ensure_ascii=False),
+            None,
+            None,
+        ),
+    )
+    assert store.flush(timeout=5.0)
+
+
+def _fees_all_verified() -> dict:
+    """费用各项 _confidence=verified 的 rule_json。"""
+    return {
+        "fees": {
+            "stamp": {"value": 0.0005, "_confidence": "verified"},
+            "transfer": {"value": 0.00001, "_confidence": "verified"},
+        }
+    }
+
+
+def _fees_one_provisional() -> dict:
+    """费用某项 _confidence=provisional（模拟当前种子的过户费状态）。"""
+    return {
+        "fees": {
+            "stamp": {"value": 0.0005, "_confidence": "verified"},
+            "transfer": {"value": 0.00001, "_confidence": "provisional"},
+        }
+    }
+
+
+def test_require_verified_returns_rule_when_all_verified(store):
+    """结构 verified + 费用各明细 verified → require_verified=True 命中返回。"""
+    _insert_confidence(store, "R-LIVE", "verified", _fees_all_verified())
+
+    p = TradingRuleProvider(store)
+    hit = p.rules_for(
+        "600519", datetime.date(2024, 3, 15), require_verified=True
+    )
+    assert hit is not None
+    assert hit.rule_id == "R-LIVE"
+
+
+def test_require_verified_blocks_when_rule_level_provisional(store):
+    """规则级 source_confidence=provisional → require_verified=True 返回 None（阻断实盘）。"""
+    _insert_confidence(store, "R-PROV", "provisional", _fees_all_verified())
+
+    p = TradingRuleProvider(store)
+    assert (
+        p.rules_for("600519", datetime.date(2024, 3, 15), require_verified=True)
+        is None
+    )
+
+
+def test_require_verified_blocks_when_fee_provisional(store):
+    """规则级 verified 但某费用明细 provisional → require_verified=True 返回 None。
+
+    对应当前种子：过户费等无权威项标 provisional，故实盘应被阻断（§11）。
+    """
+    _insert_confidence(store, "R-FEE", "verified", _fees_one_provisional())
+
+    p = TradingRuleProvider(store)
+    assert (
+        p.rules_for("600519", datetime.date(2024, 3, 15), require_verified=True)
+        is None
+    )
+
+
+def test_require_verified_false_returns_regardless(store):
+    """require_verified=False（回测/展示）即便费用 provisional 也命中返回，不阻断。"""
+    _insert_confidence(store, "R-BT", "verified", _fees_one_provisional())
+
+    p = TradingRuleProvider(store)
+    hit = p.rules_for(
+        "600519", datetime.date(2024, 3, 15), require_verified=False
+    )
+    assert hit is not None
+    assert hit.rule_id == "R-BT"
+
+
+def test_live_ready_helper():
+    """_is_live_ready：全 verified→True；规则级 provisional→False；费用 provisional→False。"""
+    full_verified = TradingRule(
+        rule_id="x",
+        market="SSE",
+        board="main",
+        product_type="stock",
+        effective_from=datetime.date(2020, 1, 1),
+        effective_to=None,
+        source_url="http://example",
+        source_confidence="verified",
+        rule_json=json.dumps(_fees_all_verified()),
+        reviewed_by=None,
+        reviewed_ts=None,
+    )
+    assert _is_live_ready(full_verified) is True
+
+    rule_provisional = dataclasses.replace(full_verified, source_confidence="provisional")
+    assert _is_live_ready(rule_provisional) is False
+
+    fee_provisional = dataclasses.replace(
+        full_verified, rule_json=json.dumps(_fees_one_provisional())
+    )
+    assert _is_live_ready(fee_provisional) is False
