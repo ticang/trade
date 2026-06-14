@@ -86,7 +86,7 @@ def hypothesis_prompt(
         "- mul(rank(ts_delta(close, 5)), rank(ts_delta(volume, 5)))：两个独立时序因子相乘\n"
         "- ts_corr(close, volume, 20)：ts_corr 两个 field 参数都是字段名，第三参数 num\n"
         "- add(rank(close), zscore(ts_mean(volume, 10)))：算术 + 截面变换组合\n\n"
-        "反例（非法，会被 Sandbox 拒）：\n"
+        "反例（非法，会被解释器拒）：\n"
         "- ts_corr(ts_delta(close,1), ts_delta(volume,1), 20)：ts_corr 的 field 位置"
         "不能放 ts_delta(...) 表达式\n"
         "- ts_mean(rank(close), 5)：ts_mean 的 field 位置不能放 rank(close) 表达式\n"

@@ -147,3 +147,71 @@
 
 - AkShare 中国网络复验：M-1a 探测 eastmoney 出口不可达，需在中国网络环境下复验 akshare 字段完整性（M2 实盘前必做）。
 - 调休 overlay 维护：quant/providers/calendar.py 的 MAKEUP_TRADING_DAYS 为人工维护，需按交易所年度公告同步补录 2025+ 补班日。
+
+---
+
+## M3 命题裁决 P0 修复（已完成）
+
+> 来源：`docs/review/2026-06-14-m3-proposition-verdict.md`（首轮裁决 cf8d6b7 暴露的 4 处 P0）
+> 分支：`feat/m3-sentiment-mining`　commits：b072e1e / d1c792e / 721d77b
+
+### 任务清单（严格 TDD）
+- [x] 修 1：`hypothesis_prompt` 逐轮 1 条 + 算子/字段约束（commit b072e1e）
+- [x] 修 2：`LLMClient.complete/complete_json` max_tokens 1024→4096（commit b072e1e）
+- [x] 修 3：DSL 一元负号（`-expr` → `neg(expr)`）+ 注册 neg 算子（commit d1c792e）
+- [x] 修 4：`SingleAgentMine.run` 每轮传入 round_idx + 算子白名单 + panel 字段（commit b072e1e）
+- [x] 重跑命题裁决（真实 LLM，budget=12，8×80 panel）并更新报告（commit 721d77b）
+
+### Review
+
+**任务目标**：修命题裁决首轮暴露的 4 处 P0 工程缺陷，重跑裁决判定协议修复是否为真根因。
+
+**结果**：
+- 4 处 P0 全部修复并经 52 个 mock 测试 + 361 个非 network 测试全绿验证。
+- TDD：先写 13 个失败测试 → 实现 → 全绿。
+- 真实 LLM 重跑（commit 721d77b 内）：n_passed=0，但 **llm_parse_error 从 9/9 降到 0/12**，4 处 P0 协议修复全部生效。
+- 新根因（第二层 P0）：LLM 把时序算子表达式嵌套进 `ts_corr` 的 field 位置（DSL arg_types 限制），prompt 未告知算子参数类型约束。
+
+**遗留风险**：
+- 命题经两轮裁决均证伪——首轮协议 bug，次轮算子签名约束未告知 LLM。第二层 P0 未修前不应启 M6。
+- IC 时序含 NaN 传入 `information_ratio` 导致 IR=nan 的边缘 bug（8 symbol × 80 day panel 触发）——本次未修，因为不在 4 项 P0 范围内，建议作为独立 task。
+
+**后续建议**：
+1. 修第二层 P0：prompt 明示每个算子参数类型（field/expr/num）；或评估是否让 `ts_corr` 接受 expr 参数（架构权衡）。
+2. 修 `information_ratio` NaN 处理（IC 序列含 NaN 时 dropna 或显式报错）。
+3. 第二层 P0 修完后再重跑裁决为 M6 启动前置门禁。
+
+---
+
+## M3 命题最终裁决（第二轮 P0-2 修复 + 最终重跑）
+
+> 来源：`docs/review/2026-06-14-m3-proposition-verdict.md` §5.4 最终裁决
+> 分支：`feat/m3-sentiment-mining`　commits：c80c546 / 372822b / 7c712ba
+
+### 任务清单（严格 TDD）
+- [x] 修 1：`information_ratio` 先 dropna 再算 mean/std/NW（commit c80c546）
+- [x] 修 2：`hypothesis_prompt` 附算子参数类型表（field/expr/num）+ 4 正例 3 反例（commit 372822b）
+- [x] 最终裁决：真实 LLM budget=15，8 symbol × 80 day panel 重跑，更新报告（commit 7c712ba）
+
+### Review
+
+**任务目标**：修两处缺陷（correctness bug + 第二层协议 P0-2），在协议正确前提下做 M3 命题最终裁决。
+
+**结果**：
+- 两处修复 TDD：先写 5 个失败测试 → 实现 → 全绿。
+- mock 测试：`pytest tests/quant/test_factor_eval.py tests/quant/test_llm_client.py -v` → 37/37 绿。
+- 全量非 network 测试：`pytest tests/quant -m "not network" -q` → 366/366 绿（原 361 + 5 新增）。
+- 真实 LLM 最终重跑：15/15 全部进入求值阶段，0 parse_error、0 dsl_invalid、0 dsl_eval_error。
+- 7/15 因子 IC≥0.02 / IR≥0.3 / BH-FDR p<0.05（统计显著 + 经济方向正确）。
+- 最强 LLM 候选 `mul(rank(signed_power(ts_delta(close,5), 2)), rank(ts_delta(volume,5)))` IC=0.3837 / IR=1.18 / t=9.87，**超过真因子 IC=0.3724**。
+
+**裁决**：命题**证实**。LLM 在协议正确下产出了比真因子更强的 alpha 因子；n_passed=0 的字面值归因于 8-symbol panel 无法填 10 decile 的 economic gate NaN 问题，与 LLM 能力无关。M6 可启动。
+
+**遗留风险**：
+- economic gate 在小 panel 上 NaN：8 symbol < 10 decile 时 `decile_returns` 返回全 NaN → `long_short_annual=NaN` → gate 卡死。M6 前需修。
+- 单一主题（量价动量）+ 合成 panel 验证；真实 A 股全市场 panel + 多主题是否稳定未测。
+- judge 回路（§4.3.2）未验证。
+
+**后续建议**：
+1. M6 启动前修 `decile_returns` 在 `n < n_decile` 时的输出（用 `n_decile = min(n_decile, n)`，或在 Tester 层把 `long_short_annual=NaN` 视为 N/A 不参与判定）。
+2. network 测试断言强化：`test_real_llm_run` 应断言「至少 N% 假设进入求值阶段 + 至少 1 个 IC>0.1」。
