@@ -12,6 +12,7 @@ import logging
 import queue
 import sqlite3
 import threading
+from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
 from quant.data.schema import create_sqlite
@@ -52,6 +53,10 @@ class SqliteStore:
         """建立连接 + 表结构并启动写线程。幂等：已启动则直接返回。"""
         if self._thread is not None and self._thread.is_alive():
             return
+        # Python 3.12+ 废弃默认 date/datetime adapter，显式注册为 ISO 字符串。
+        # SqliteStore 作为事务库唯一入口，此处注册可消除 ~250 条 DeprecationWarning。
+        sqlite3.register_adapter(date, lambda d: d.isoformat())
+        sqlite3.register_adapter(datetime, lambda dt: dt.isoformat(sep=" "))
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
