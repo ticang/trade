@@ -31,6 +31,7 @@ __all__ = [
     "sub",
     "mul",
     "div",
+    "neg",
 ]
 
 
@@ -196,3 +197,8 @@ def mul(x: pd.Series, y: pd.Series) -> pd.Series:
 def div(x: pd.Series, y: pd.Series) -> pd.Series:
     """series 逐元素除；零除自然得 inf/nan。"""
     return x / y
+
+
+def neg(series: pd.Series) -> pd.Series:
+    """一元取负：-series。供 parser 把 `-expr` 映射为 neg(expr)。"""
+    return -series

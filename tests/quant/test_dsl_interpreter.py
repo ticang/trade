@@ -220,3 +220,40 @@ def test_sandbox_validate_accepts_arithmetic() -> None:
         Sandbox().validate("mul(rank(close), rank(ts_delta(close, 5)))") is True
     )
     assert Sandbox().validate("sub(rank(close), rank(volume))") is True
+
+
+# ===========================================================================
+# 一元负号（LLM 习惯产 rank(-ts_mean(close,20))），映射为 neg 算子
+# ===========================================================================
+def test_evaluate_neg_of_field(panel: pd.DataFrame) -> None:
+    """neg(close) == -close。"""
+    got = evaluate("neg(close)", panel)
+    expected = -panel["close"]
+    pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
+
+
+def test_evaluate_unary_minus_of_field(panel: pd.DataFrame) -> None:
+    """一元 `-` 前缀 → neg：-close 与 neg(close) 等价。"""
+    got = evaluate("-close", panel)
+    expected = -panel["close"]
+    pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
+
+
+def test_evaluate_unary_minus_of_call(panel: pd.DataFrame) -> None:
+    """一元 `-` 套在算子调用上 → neg(call)：rank(-ts_mean(close,5))。"""
+    got = evaluate("rank(-ts_mean(close, 5))", panel)
+    inner = ops.ts_mean(panel, "close", 5)
+    expected = ops.rank(panel, -inner)
+    pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
+
+
+def test_sandbox_validate_accepts_unary_minus() -> None:
+    """Sandbox 接受 -expr 形式（因为会展开为已注册 neg）。"""
+    assert Sandbox().validate("-close") is True
+    assert Sandbox().validate("rank(-ts_mean(close, 5))") is True
+
+
+def test_sandbox_validate_accepts_neg_call() -> None:
+    """Sandbox 接受显式 neg(...) 形式。"""
+    assert Sandbox().validate("neg(close)") is True
+    assert Sandbox().validate("rank(neg(ts_mean(close, 5)))") is True

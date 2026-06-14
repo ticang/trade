@@ -49,10 +49,11 @@ _REGISTRY: dict[str, OpEntry] = {
     "sub": (ops.sub, 2, ["expr", "expr"]),
     "mul": (ops.mul, 2, ["expr", "expr"]),
     "div": (ops.div, 2, ["expr", "expr"]),
+    "neg": (ops.neg, 1, ["expr"]),
 }
 
-# signed_power / add / sub / mul / div 不接收 df（签名仅含 series/常量），调用时不传 df
-_NO_DF_OPS = frozenset({"signed_power", "add", "sub", "mul", "div"})
+# signed_power / add / sub / mul / div / neg 不接收 df（签名仅含 series），调用时不传 df
+_NO_DF_OPS = frozenset({"signed_power", "add", "sub", "mul", "div", "neg"})
 
 
 class DslError(Exception):
@@ -67,7 +68,7 @@ _TOKEN_RE = re.compile(
     \s*(?:
         (?P<num>\d+\.\d+|\d+)        # 整数 / 浮点
       | (?P<name>[A-Za-z_][A-Za-z0-9_]*)  # 标识符（字段名 / 算子名）
-      | (?P<punc>[(),])              # 括号 / 逗号
+      | (?P<punc>[(),\-])           # 括号 / 逗号 / 一元负号
     )
     """,
     re.VERBOSE,
@@ -127,6 +128,11 @@ class _Parser:
         if tok is None:
             raise DslError("意外的表达式结尾")
         kind, val = tok
+        # 一元负号：-expr → ('call','neg',[expr])，避免 LLM 写 -x 被拒
+        if kind == "punc" and val == "-":
+            self._next()
+            inner = self._parse_atom()
+            return ("call", "neg", [inner])
         if kind == "num":
             self._next()
             num_val: float = float(val) if "." in val else int(val)
