@@ -69,6 +69,8 @@ def test_classify_symbol():
     assert classify_symbol("688981") == ("SSE", "star", "stock")
     assert classify_symbol("000001") == ("SZSE", "main", "stock")
     assert classify_symbol("300750") == ("SZSE", "chinext", "stock")
+    assert classify_symbol("830799") == ("BSE", "main", "stock")
+    assert classify_symbol("510300") == ("ETF", "etp", "fund")
 
 
 def test_empty_table_returns_none(store):
@@ -126,6 +128,36 @@ def test_rule_outside_interval_returns_none(store):
 
     p = TradingRuleProvider(store)
     assert p.rules_for("600519", datetime.date(2024, 1, 1)) is None
+
+
+def test_null_effective_to_means_indefinite(store):
+    """effective_to IS NULL 表示无限期生效。
+
+    插一条 effective_to=NULL 的规则，查远期日期应命中——
+    证明 NULL 分支（effective_to IS NULL OR effective_to > d）生效，
+    不会被 effective_to>d 过滤掉（NULL 与任何值比较均为 NULL）。
+    """
+    _insert(
+        store,
+        "R-NULL",
+        "SSE",
+        "main",
+        "stock",
+        datetime.date(2024, 1, 1),
+        None,  # 显式 NULL，区别于 9999-12-31 哨兵
+    )
+
+    # 落库确认确实是 SQL NULL（NULL ≠ '9999-12-31'）
+    raw = store.query_all(
+        "SELECT effective_to FROM trading_rule WHERE rule_id = ?", ("R-NULL",)
+    )
+    assert raw[0]["effective_to"] is None
+
+    p = TradingRuleProvider(store)
+    hit = p.rules_for("600519", datetime.date(2099, 1, 1))
+    assert hit is not None
+    assert hit.rule_id == "R-NULL"
+    assert hit.effective_to is None
 
 
 def test_datetime_decision_time_accepted(store):
