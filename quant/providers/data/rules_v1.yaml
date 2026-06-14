@@ -1,0 +1,370 @@
+# A 股交易规则 v1 种子集
+#
+# 置信策略（分层标注）：
+#   - 结构性规则（涨跌停/手数/T+N/最小变动）= source_confidence: verified
+#     结构权威，可作为回测、限价、手数计算依据。
+#   - 费用明细（印花税/过户费/佣金/经手费）= rule_json.fees.*._confidence: provisional
+#     费率随政策调整且与券商协定相关，尚未逐项核验生效日期，仅作占位参考，不作实盘费用依据。
+#
+# 已知留待后续：
+#   - ST/*ST 股票 ±5% 限制需基础数据「ST 标记」配合；
+#     classify_symbol 仅按 symbol 前缀路由，无法识别 ST 状态，本表仅录入规则值，
+#     路由逻辑（symbol→board=st）留待基础数据接入后补。
+#   - 可转债临停（涨跌幅 ≥20%/≥30% 触发临停）细节未录入，仅保留涨跌停上限。
+#   - 跨境 ETF 实行 T+0 回转，普通 ETF 为 T+1，分别建条。
+#
+# 区间策略：effective_to 为 null 表示现行；分段规则（如创业板改革前后）区间互斥不重叠。
+
+# ============================================================
+# 沪市主板股票
+# ============================================================
+- rule_id: sse_main_stock
+  market: SSE
+  board: main
+  product_type: stock
+  effective_from: 2020-01-01
+  effective_to: null
+  source_url: http://www.sse.com.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.10
+    daily_limit_down: 0.10
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 深市主板股票
+# ============================================================
+- rule_id: szse_main_stock
+  market: SZSE
+  board: main
+  product_type: stock
+  effective_from: 2020-01-01
+  effective_to: null
+  source_url: http://www.szse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.10
+    daily_limit_down: 0.10
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 科创板股票（沪市，2019-07-22 开板）
+# ============================================================
+- rule_id: sse_star_stock
+  market: SSE
+  board: star
+  product_type: stock
+  effective_from: 2019-07-22
+  effective_to: null
+  source_url: http://www.sse.com.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.20
+    daily_limit_down: 0.20
+    settlement_T: 1
+    min_buy: 200
+    lot_increment: 1
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 创业板股票（改革后，2020-08-24 起±20%）
+# ============================================================
+- rule_id: szse_chinext_stock_post_reform
+  market: SZSE
+  board: chinext
+  product_type: stock
+  effective_from: 2020-08-24
+  effective_to: null
+  source_url: http://www.szse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.20
+    daily_limit_down: 0.20
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 创业板股票（改革前，±10%，区间 2020-01-01~2020-08-23）
+# ============================================================
+- rule_id: szse_chinext_stock_pre_reform
+  market: SZSE
+  board: chinext
+  product_type: stock
+  effective_from: 2020-01-01
+  effective_to: 2020-08-23
+  source_url: http://www.szse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.10
+    daily_limit_down: 0.10
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 北交所股票（2021-11-15 开市，±30%）
+# ============================================================
+- rule_id: bse_stock
+  market: BSE
+  board: main
+  product_type: stock
+  effective_from: 2021-11-15
+  effective_to: null
+  source_url: http://www.bse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.30
+    daily_limit_down: 0.30
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 1
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# ST 股票（主板，±5%）
+# 注：ST 为股票状态而非独立板别；classify_symbol 按 symbol 前缀无法识别 ST，
+# 需基础数据 ST 标记配合路由。此处先录入规则值，board=st 为虚拟板别占位，
+# 路由逻辑留待基础数据接入后完善。
+# ============================================================
+- rule_id: st_main
+  market: SZSE
+  board: st
+  product_type: stock
+  effective_from: 2020-01-01
+  effective_to: null
+  source_url: http://www.szse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.01
+    daily_limit_up: 0.05
+    daily_limit_down: 0.05
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: 0.0005
+        _confidence: provisional
+      transfer:
+        value: 0.00001
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 可转债（2022-08-01 新规±20%，T+0，单位为张）
+# 注：临停细节（涨跌幅 ≥20%/≥30% 触发）未录入。
+# ============================================================
+- rule_id: convertible_bond
+  market: BOND
+  board: bond
+  product_type: bond
+  effective_from: 2022-08-01
+  effective_to: null
+  source_url: http://www.szse.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.001
+    daily_limit_up: 0.20
+    daily_limit_down: 0.20
+    settlement_T: 0
+    min_buy: 10
+    lot_increment: 10
+    max_order: 1000000
+    fees:
+      stamp:
+        value: null
+        _confidence: provisional
+      transfer:
+        value: null
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 普通 ETF（T+1 回转）
+# ============================================================
+- rule_id: etf_normal
+  market: ETF
+  board: etp
+  product_type: fund
+  effective_from: 2020-01-01
+  effective_to: null
+  source_url: http://www.sse.com.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.001
+    daily_limit_up: 0.10
+    daily_limit_down: 0.10
+    settlement_T: 1
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: null
+        _confidence: provisional
+      transfer:
+        value: null
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
+
+# ============================================================
+# 跨境 ETF（T+0 回转）
+# ============================================================
+- rule_id: etf_crossborder
+  market: ETF
+  board: etp
+  product_type: fund
+  effective_from: 2020-01-01
+  effective_to: null
+  source_url: http://www.sse.com.cn/
+  source_confidence: verified
+  rule_json:
+    tick: 0.001
+    daily_limit_up: 0.10
+    daily_limit_down: 0.10
+    settlement_T: 0
+    min_buy: 100
+    lot_increment: 100
+    max_order: 1000000
+    fees:
+      stamp:
+        value: null
+        _confidence: provisional
+      transfer:
+        value: null
+        _confidence: provisional
+      commission:
+        value: null
+        _confidence: provisional
+      exchange:
+        value: null
+        _confidence: provisional
+  reviewed_by: null
+  reviewed_ts: null
