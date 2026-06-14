@@ -121,3 +121,133 @@ def rank_ic_series(
         ics[d] = ic
 
     return pd.Series(ics, name="rank_ic")
+
+
+def information_ratio(ic_series: pd.Series, lag: int = 1) -> tuple[float, float]:
+    """IR + Newey-West 调整 t 统计（设计 v0.5 §4.2.3）。
+
+    - IR = mean(ic) / std(ic)（样本 std，ddof=0）
+    - newey_west_t = mean(ic) / nw_std，nw_std 由 HAC 估计均值的方差：
+      Var(mean) = (1/n) * [gamma0 + 2*sum_{l=1..lag} (1 - l/(lag+1)) * gamma_l]
+      gamma_l = (1/n) * sum_{t=l+1..n} (x_t-mean)(x_{t-l}-mean)
+    - lag >= 1；样本数 < lag + 2 返回 (nan, nan)
+    - 返回 (ir, t_stat)
+    """
+    ic = ic_series.to_numpy(dtype=float)
+    n = len(ic)
+    if n < lag + 2 or lag < 1:
+        return float("nan"), float("nan")
+
+    mean = float(ic.mean())
+    std = float(ic.std(ddof=0))
+    ir = mean / std if std != 0 else float("nan")
+
+    # Newey-West HAC：均值的方差
+    centered = ic - mean
+    gamma0 = float(np.dot(centered, centered)) / n
+    weighted = gamma0
+    for l in range(1, lag + 1):
+        gamma_l = float(np.dot(centered[l:], centered[:-l])) / n
+        weight = 1.0 - l / (lag + 1)
+        weighted += 2.0 * weight * gamma_l
+    nw_std = float(np.sqrt(weighted / n)) if weighted > 0 else float("nan")
+    t_stat = mean / nw_std if nw_std and not np.isnan(nw_std) else float("nan")
+    return ir, t_stat
+
+
+def decile_returns(
+    factor: pd.Series, forward_returns: pd.Series, n_decile: int = 10
+) -> dict:
+    """截面 N 分位分层回测（设计 v0.5 §4.2.3）。
+
+    - 按 factor 排序分 n_decile 组（pd.qcut），算每组 forward_returns 均值
+    - 返回 {'decile_means': Series(index=1..n_decile), 'long_short': top-bottom}
+    - qcut 因重复值/极端值失败时用 rank-based 分组兜底
+    """
+    pair = pd.concat(
+        [factor.rename("factor"), forward_returns.rename("fwd")], axis=1
+    ).dropna()
+    n = len(pair)
+    if n < n_decile:
+        # 样本不足以分组：返回全 nan 的 n_decile 组
+        means = pd.Series([float("nan")] * n_decile, index=range(1, n_decile + 1))
+        return {"decile_means": means, "long_short": float("nan")}
+
+    f = pair["factor"]
+    r = pair["fwd"]
+
+    try:
+        groups = pd.qcut(f, n_decile, labels=False, duplicates="raise")
+    except ValueError:
+        # 兜底：按因子排序后的位置均分 n_decile 桶（np.array_split 保证组数=n_decile），
+        # 不依赖值域唯一性，即使大量重复值也能稳定分 10 组
+        order = np.argsort(f.to_numpy(dtype=float), kind="stable")
+        bucket = np.empty(n, dtype=int)
+        for k, idx in enumerate(np.array_split(order, n_decile)):
+            bucket[idx] = k
+        groups = pd.Series(bucket, index=f.index)
+
+    # qcut 返回 0..k-1，平移到 1..k 作为分位标签
+    groups = groups + 1
+    means = r.groupby(groups).mean().reindex(range(1, n_decile + 1))
+
+    top = float(means.iloc[-1])
+    bottom = float(means.iloc[0])
+    long_short = top - bottom if not (np.isnan(top) or np.isnan(bottom)) else float("nan")
+    return {"decile_means": means, "long_short": long_short}
+
+
+def ic_decay(ic_by_horizon: dict[int, float]) -> pd.Series:
+    """IC 随 horizon 衰减排序（设计 v0.5 §4.2.3）。
+
+    ic_by_horizon: {horizon_days: ic}。返回按 horizon 升序排序的 Series，
+    便于绘图与判断衰减速度。纯排序包装。
+    """
+    if not ic_by_horizon:
+        return pd.Series(dtype=float, name="ic_decay")
+    return pd.Series(ic_by_horizon).sort_index().rename("ic_decay")
+
+
+def novelty_check(
+    factor_values: pd.Series,
+    known_factor_values: pd.Series,
+    factor_returns: pd.Series | None = None,
+    known_factor_returns: pd.Series | None = None,
+    threshold: float = 0.5,
+) -> dict:
+    """新颖性双查（设计 v0.5 §4.2.3）。
+
+    - value_corr = |Spearman(factor_values, known_factor_values)|（对齐 index）
+    - 提供收益序列时 return_corr = |Spearman(factor_returns, known_factor_returns)|；否则 None
+    - is_novel = value_corr < threshold 且 (return_corr is None 或 return_corr < threshold)
+    - 任一相关 > threshold → is_novel=False（拒绝为已知因子复述）
+    - 返回 {'value_corr', 'return_corr', 'is_novel', 'threshold'}
+    """
+    pair = pd.concat(
+        [factor_values.rename("f"), known_factor_values.rename("k")], axis=1
+    ).dropna()
+    if len(pair) < 2:
+        value_corr = float("nan")
+    else:
+        rho, _ = spearmanr(pair["f"].to_numpy(), pair["k"].to_numpy())
+        value_corr = abs(float(rho))
+
+    return_corr: float | None = None
+    if factor_returns is not None and known_factor_returns is not None:
+        rp = pd.concat(
+            [factor_returns.rename("fr"), known_factor_returns.rename("kr")], axis=1
+        ).dropna()
+        if len(rp) >= 2:
+            rho_r, _ = spearmanr(rp["fr"].to_numpy(), rp["kr"].to_numpy())
+            return_corr = abs(float(rho_r))
+
+    def _safe_below(corr: float | None) -> bool:
+        return True if corr is None else (not np.isnan(corr) and corr < threshold)
+
+    is_novel = bool(_safe_below(value_corr) and _safe_below(return_corr))
+    return {
+        "value_corr": value_corr,
+        "return_corr": return_corr,
+        "is_novel": is_novel,
+        "threshold": threshold,
+    }

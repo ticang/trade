@@ -16,7 +16,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from quant.factor.eval import neutralize, rank_ic, rank_ic_series
+from quant.factor.eval import (
+    decile_returns,
+    ic_decay,
+    information_ratio,
+    neutralize,
+    novelty_check,
+    rank_ic,
+    rank_ic_series,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +214,202 @@ def test_rank_ic_insufficient_sample_nan():
     returns = pd.Series([0.01], index=["X0"])
     ic = rank_ic(factor, returns)
     assert np.isnan(ic)
+
+
+# ===========================================================================
+# Task B2：IR(Newey-West) + 10 分层 + 新颖性 + 衰减（设计 v0.5 §4.2.3）
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# B2-1. IR + Newey-West t 统计
+# ---------------------------------------------------------------------------
+def _manual_nw_std(ic: np.ndarray, lag: int) -> float:
+    """手算 Newey-West 均值方差对应的 std（对照基准）。
+
+    Var(mean) = (1/n) * [gamma0 + 2*sum_{l=1..lag} (1 - l/(lag+1)) * gamma_l]
+    nw_std = sqrt(Var(mean))；gamma_l = (1/n) * sum_{t=l+1..n} (x_t-mean)(x_{t-l}-mean)
+    """
+    n = len(ic)
+    mean = ic.mean()
+    centered = ic - mean
+    gamma0 = np.dot(centered, centered) / n
+    weighted = gamma0
+    for l in range(1, lag + 1):
+        gamma_l = np.dot(centered[l:], centered[:-l]) / n
+        weight = 1.0 - l / (lag + 1)
+        weighted += 2.0 * weight * gamma_l
+    return float(np.sqrt(weighted / n))
+
+
+def test_information_ratio_nw():
+    """IC 序列带正自相关：IR + NW t；NW std 与手算一致；白噪声 IC 下 NW t≈mean/se。"""
+    # AR(1) 正自相关 IC
+    n = 60
+    ic = np.zeros(n)
+    ic[0] = 0.05
+    for t in range(1, n):
+        ic[t] = 0.7 * ic[t - 1] + RNG.normal(0, 0.02)
+    ic_series = pd.Series(ic)
+
+    ir, t_stat = information_ratio(ic_series, lag=5)
+
+    # IR = mean/std（样本 std）
+    expected_ir = ic_series.mean() / ic_series.std(ddof=0)
+    np.testing.assert_allclose(ir, expected_ir, rtol=1e-9)
+
+    # NW std 与手算一致 → t = mean/nw_std
+    nw_std = _manual_nw_std(ic, lag=5)
+    np.testing.assert_allclose(t_stat, ic_series.mean() / nw_std, rtol=1e-9)
+
+    # 白噪声 IC：大样本下 NW t ≈ mean/se（gamma_1→0，NW 退化为经典 se）
+    noise = pd.Series(RNG.normal(0.0, 0.02, 5000))
+    _, t_noise = information_ratio(noise, lag=1)
+    se = noise.std(ddof=0) / np.sqrt(len(noise))
+    np.testing.assert_allclose(t_noise, noise.mean() / se, rtol=0.05)
+
+
+# ---------------------------------------------------------------------------
+# B2-2. lag 越大吸收更多自相关 → NW std 不同
+# ---------------------------------------------------------------------------
+def test_ir_lag_effect():
+    """强自相关 IC，lag=1 vs lag=5 的 NW std 应明显不同（lag 大者吸收更多自相关）。"""
+    n = 80
+    ic = np.zeros(n)
+    for t in range(1, n):
+        ic[t] = 0.8 * ic[t - 1] + RNG.normal(0, 0.01)
+    ic_series = pd.Series(ic)
+
+    _, t1 = information_ratio(ic_series, lag=1)
+    _, t5 = information_ratio(ic_series, lag=5)
+
+    nw1 = _manual_nw_std(ic, lag=1)
+    nw5 = _manual_nw_std(ic, lag=5)
+    # lag 不同 → NW std 不同 → t 不同
+    assert not np.isclose(nw1, nw5, rtol=1e-3)
+    assert not np.isclose(t1, t5, rtol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# B2-3. 样本不足 → nan
+# ---------------------------------------------------------------------------
+def test_ir_insufficient_sample_nan():
+    """ic_series 长度 < lag+2 → (nan, nan)。"""
+    short = pd.Series([0.1, 0.2])  # len=2，lag=1 → 2 < 3
+    ir, t_stat = information_ratio(short, lag=1)
+    assert np.isnan(ir)
+    assert np.isnan(t_stat)
+
+
+# ---------------------------------------------------------------------------
+# B2-4. 分层单调性
+# ---------------------------------------------------------------------------
+def test_decile_returns_monotone():
+    """因子与 forward_returns 单调正相关 → decile_means 单调增，long_short>0。"""
+    n = 200
+    base = np.linspace(0, 1, n)
+    factor = pd.Series(base + RNG.normal(0, 0.01, n), index=[f"X{i}" for i in range(n)])
+    # forward_returns = factor 的单调函数 + 微噪声
+    fwd = pd.Series(base + RNG.normal(0, 0.005, n), index=factor.index)
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    means = result["decile_means"]
+    ls = result["long_short"]
+
+    assert isinstance(means, pd.Series)
+    assert list(means.index) == list(range(1, 11))
+    # 单调不减（容许轻微抖动，用相邻差全为正的容差判断）
+    diffs = np.diff(means.to_numpy())
+    assert (diffs > -1e-6).all()
+    # 多头减空头 > 0
+    assert ls > 0
+
+
+# ---------------------------------------------------------------------------
+# B2-5. qcut 失败兜底（大量重复值）
+# ---------------------------------------------------------------------------
+def test_decile_returns_qcut_fallback():
+    """因子大量重复值（qcut bin 边界非唯一抛错）→ rank 分组兜底，返回 10 组。"""
+    # 一半 0、一半 1，qcut 必失败
+    n = 200
+    factor = pd.Series([0.0] * (n // 2) + [1.0] * (n // 2), index=[f"X{i}" for i in range(n)])
+    # 收益按因子分组：0→负，1→正
+    fwd = pd.Series(
+        [-0.01] * (n // 2) + [0.01] * (n // 2), index=factor.index
+    )
+
+    result = decile_returns(factor, fwd, n_decile=10)
+    means = result["decile_means"]
+    assert len(means) == 10
+    assert list(means.index) == list(range(1, 11))
+    # 长头减空头 >= 0（兜底应正确区分高低组）
+    assert result["long_short"] >= -1e-12
+
+
+# ---------------------------------------------------------------------------
+# B2-6. IC 衰减排序
+# ---------------------------------------------------------------------------
+def test_ic_decay_sorted():
+    """{horizon: ic} → 按 horizon 排序的 Series。"""
+    ic_map = {1: 0.10, 5: 0.08, 10: 0.03, 20: 0.01}
+    decay = ic_decay(ic_map)
+    assert isinstance(decay, pd.Series)
+    assert list(decay.index) == [1, 5, 10, 20]
+    np.testing.assert_allclose(decay.to_numpy(), [0.10, 0.08, 0.03, 0.01])
+
+
+# ---------------------------------------------------------------------------
+# B2-7. 新颖性高相关被拒
+# ---------------------------------------------------------------------------
+def test_novelty_high_corr_rejected():
+    """factor ≈ known（value_corr > 0.5）→ is_novel=False。"""
+    n = 100
+    base = RNG.normal(0, 1, n)
+    factor = pd.Series(base, index=[f"X{i}" for i in range(n)])
+    known = pd.Series(base + RNG.normal(0, 0.01, n), index=factor.index)  # 极高相关
+
+    result = novelty_check(factor, known, threshold=0.5)
+    assert result["value_corr"] > 0.5
+    assert result["is_novel"] is False
+    assert result["return_corr"] is None
+    assert result["threshold"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# B2-8. 新颖性低相关通过
+# ---------------------------------------------------------------------------
+def test_novelty_low_corr_accepted():
+    """factor 与 known 不相关 → is_novel=True。"""
+    n = 100
+    factor = pd.Series(RNG.normal(0, 1, n), index=[f"X{i}" for i in range(n)])
+    known = pd.Series(RNG.normal(0, 1, n), index=factor.index)  # 独立
+
+    result = novelty_check(factor, known, threshold=0.5)
+    assert result["value_corr"] < 0.5
+    assert result["is_novel"] is True
+
+
+# ---------------------------------------------------------------------------
+# B2-9. 收益预测相关双查
+# ---------------------------------------------------------------------------
+def test_novelty_return_corr_check():
+    """value 低相关但 return 高相关 → is_novel=False（双查任一超阈即拒）。"""
+    n = 100
+    # factor 值与 known 值不相关
+    factor_values = pd.Series(RNG.normal(0, 1, n), index=[f"X{i}" for i in range(n)])
+    known_factor_values = pd.Series(RNG.normal(0, 1, n), index=factor_values.index)
+    # 但收益预测高度相关
+    base_ret = RNG.normal(0, 0.02, n)
+    factor_returns = pd.Series(base_ret, index=factor_values.index)
+    known_factor_returns = pd.Series(base_ret + RNG.normal(0, 0.0001, n), index=factor_values.index)
+
+    result = novelty_check(
+        factor_values,
+        known_factor_values,
+        factor_returns=factor_returns,
+        known_factor_returns=known_factor_returns,
+        threshold=0.5,
+    )
+    assert result["return_corr"] is not None
+    assert result["return_corr"] > 0.5
+    assert result["is_novel"] is False
