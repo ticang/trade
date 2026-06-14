@@ -5,9 +5,9 @@
 """
 
 from datetime import date, datetime, time, timedelta
-from typing import Iterable, Literal
+from typing import Iterable
 
-PitConfidence = Literal["live", "rule_inferred"]
+from quant.data.models import PitConfidence
 
 # 数据集与收盘后披露时刻映射（§4.1.5）
 _DATASET_TIME = {
