@@ -122,6 +122,23 @@ def test_evaluate_arithmetic_in_call(panel: pd.DataFrame) -> None:
     pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
 
 
+def test_evaluate_arithmetic_mul_of_ranks(panel: pd.DataFrame) -> None:
+    """mul(rank(close), rank(ts_delta(close,5)))：两个 expr 求值后相乘。"""
+    expr = "mul(rank(close), rank(ts_delta(close, 5)))"
+    got = evaluate(expr, panel)
+    lhs = ops.rank(panel, panel["close"])
+    rhs = ops.rank(panel, ops.ts_delta(panel, "close", 5))
+    expected = ops.mul(lhs, rhs)
+    pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
+
+
+def test_evaluate_arithmetic_sub(panel: pd.DataFrame) -> None:
+    """sub(rank(close), rank(volume))：横截面 rank 相减。"""
+    got = evaluate("sub(rank(close), rank(volume))", panel)
+    expected = ops.sub(ops.rank(panel, panel["close"]), ops.rank(panel, panel["volume"]))
+    pd.testing.assert_series_equal(_norm(got), _norm(expected), check_names=False)
+
+
 def test_evaluate_zscore_of_ts_mean(panel: pd.DataFrame) -> None:
     got = evaluate("zscore(ts_mean(close, 3))", panel)
     inner = ops.ts_mean(panel, "close", 3)
@@ -195,3 +212,11 @@ def test_sandbox_validate_syntax_error() -> None:
 def test_sandbox_validate_simple_field() -> None:
     """单字段也算合法（无 call）。"""
     assert Sandbox().validate("close") is True
+
+
+def test_sandbox_validate_accepts_arithmetic() -> None:
+    """含已注册算术算子（add/sub/mul/div）的表达式 → True。"""
+    assert (
+        Sandbox().validate("mul(rank(close), rank(ts_delta(close, 5)))") is True
+    )
+    assert Sandbox().validate("sub(rank(close), rank(volume))") is True

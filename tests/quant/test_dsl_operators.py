@@ -16,13 +16,17 @@ import pandas as pd
 import pytest
 
 from quant.dsl.operators import (
+    add,
     decay_linear,
     delay,
+    div,
     group_neutral,
+    mul,
     quantile,
     rank,
     scale,
     signed_power,
+    sub,
     ts_corr,
     ts_delta,
     ts_max,
@@ -286,3 +290,44 @@ def test_signed_power() -> None:
     got = signed_power(s, e)
     expected = np.sign(s) * (np.abs(s) ** e)
     pd.testing.assert_series_equal(got, expected, check_names=False)
+
+
+def test_add() -> None:
+    a = pd.Series([1.0, 2.0, 3.0])
+    b = pd.Series([10.0, 20.0, 30.0])
+    got = add(a, b)
+    expected = a + b
+    pd.testing.assert_series_equal(got, expected, check_names=False)
+
+
+def test_sub() -> None:
+    a = pd.Series([10.0, 20.0, 30.0])
+    b = pd.Series([1.0, 2.0, 3.0])
+    got = sub(a, b)
+    expected = a - b
+    pd.testing.assert_series_equal(got, expected, check_names=False)
+
+
+def test_mul() -> None:
+    a = pd.Series([1.0, 2.0, 3.0])
+    b = pd.Series([10.0, 20.0, 30.0])
+    got = mul(a, b)
+    expected = a * b
+    pd.testing.assert_series_equal(got, expected, check_names=False)
+
+
+def test_div() -> None:
+    a = pd.Series([10.0, 20.0, 30.0])
+    b = pd.Series([2.0, 5.0, 3.0])
+    got = div(a, b)
+    expected = a / b
+    pd.testing.assert_series_equal(got, expected, check_names=False)
+
+
+def test_div_by_zero_is_nan_or_inf() -> None:
+    """零除遵循 pandas 自然行为：非零/零→inf，零/零→nan。"""
+    a = pd.Series([1.0, 0.0])
+    b = pd.Series([0.0, 0.0])
+    got = div(a, b)
+    assert np.isinf(got.iloc[0])
+    assert np.isnan(got.iloc[1])

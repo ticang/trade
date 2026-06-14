@@ -27,6 +27,10 @@ __all__ = [
     "scale",
     "group_neutral",
     "signed_power",
+    "add",
+    "sub",
+    "mul",
+    "div",
 ]
 
 
@@ -171,3 +175,24 @@ def group_neutral(
 def signed_power(series: pd.Series, e: float) -> pd.Series:
     """保号乘幂：sign(x) * |x|^e。"""
     return np.sign(series) * (np.abs(series) ** e)
+
+
+# 双 series 算术：向量化，结果与入参对齐；div 零除沿用 pandas inf/nan 自然行为
+def add(x: pd.Series, y: pd.Series) -> pd.Series:
+    """series 逐元素加。"""
+    return x + y
+
+
+def sub(x: pd.Series, y: pd.Series) -> pd.Series:
+    """series 逐元素减。"""
+    return x - y
+
+
+def mul(x: pd.Series, y: pd.Series) -> pd.Series:
+    """series 逐元素乘。"""
+    return x * y
+
+
+def div(x: pd.Series, y: pd.Series) -> pd.Series:
+    """series 逐元素除；零除自然得 inf/nan。"""
+    return x / y

@@ -45,10 +45,14 @@ _REGISTRY: dict[str, OpEntry] = {
     "group_neutral": (ops.group_neutral, 2, ["expr", "field"]),
     # 算术（无 df，签名特殊）
     "signed_power": (ops.signed_power, 2, ["expr", "num"]),
+    "add": (ops.add, 2, ["expr", "expr"]),
+    "sub": (ops.sub, 2, ["expr", "expr"]),
+    "mul": (ops.mul, 2, ["expr", "expr"]),
+    "div": (ops.div, 2, ["expr", "expr"]),
 }
 
-# signed_power 是唯一不接收 df 的算子（签名 (series, e)），调用时不传 df
-_NO_DF_OPS = frozenset({"signed_power"})
+# signed_power / add / sub / mul / div 不接收 df（签名仅含 series/常量），调用时不传 df
+_NO_DF_OPS = frozenset({"signed_power", "add", "sub", "mul", "div"})
 
 
 class DslError(Exception):
