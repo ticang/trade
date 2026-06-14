@@ -109,6 +109,94 @@ LLM 输出可解析后，`dsl_expr` 仍被 Sandbox 拒。典型非法形式：
 
 ## 5. 局限与后续
 
+### 5.0 协议修复后重跑（2026-06-14）
+
+修完 §5.2 中 3 项 P0（commit `b072e1e`、`d1c792e`）后，按 §5.3 要求
+**同命题重跑**，判定 P0 是否真根因，还是 LLM 固有不可行。
+
+**修复内容**：
+- `hypothesis_prompt` 改为逐轮请求恰好 1 条新假设（删去「本轮假设预算 N 条」
+  诱导）；附可用算子清单 + panel 字段清单 + DSL 函数式语法示例
+  （mul/add/sub/div，一元负号用 `neg(...)`）
+- `LLMClient.complete / complete_json` 默认 `max_tokens` 1024→4096
+- DSL 一元负号：parser 把 `-expr` 映射为 `neg(expr)`，新增 `neg` 算子
+- `SingleAgentMine.run` 每轮重新构造 prompt（携带 round_idx + 算子白名单
+  + panel 字段列表，从 `panel.columns` 取字段）
+
+**重跑配置**：
+- 主题：量价动量
+- budget：12
+- seed：11
+- snapshot_id：`snap_m3_verdict_v2`
+- panel：8 symbol × 80 day，含 close/volume
+- 真因子：收益与 `rank(ts_delta(close,5))` 截面排序正相关（slope=0.005
+  + 小噪声）；健全性自检 `ic_mean=0.2175 ir=0.625 t=4.817 n=75`，
+  即存在一个**清晰可发现**的 alpha 信号
+- 门禁：min_ic=0.02 / min_ir=0.3 / min_long_short_annual=0（默认 BH-FDR α=0.05）
+
+**结果**：
+
+| 指标 | 值 |
+|---|---|
+| n_hypotheses | 12 |
+| **n_passed** | **0** |
+| n_failures | 12 |
+| 失败原因分布 | `dsl_eval_error`: 11；`ir_below_min,long_short_annual_below_min`: 1 |
+| llm_parse_error | **0**（修复前 9/9，修复后 0/12） |
+| 候选 DSL | （空） |
+
+**P0 修复全部生效**：
+- 12/12 全部 LLM 输出可被 `complete_json` 解析为 dict（修复前 9/9 parse_error）
+- LLM 全程未产 `*`/`+` 等中缀符号，未产 `return` 等非字段名
+- 一元负号被正确接受并求值：`neg(ts_corr(...))`、`rank(neg(ts_corr(...)))` 等
+- 字段全部限定在 close/volume 内
+- prompt 逐轮 1 条契约生效，无再返回数组
+
+**进入求值阶段的 1 条 DSL**（其余 11 条被 Interpreter 拒）：
+
+```
+zscore(div(mul(ts_delta(close,20), decay_linear(volume,20)), ts_mean(volume,20)))
+```
+
+IC/IR 未达门禁（与真因子方向不同——LLM 偏向"量价交叉动量"而非"纯价 5 日动量"）。
+
+**未通过真因子**（健全性证明可被发现）：
+
+```
+rank(ts_delta(close,5))   # 健全性自检 ic_mean=0.2175 ir=0.625 t=4.817
+```
+
+LLM 在 12 轮内未逼近产出此表达式。
+
+**11/12 `dsl_eval_error` 根因**：LLM 习惯把时序算子表达式嵌套进 `ts_corr`
+的 field 位置，例如：
+
+```
+ts_corr(ts_delta(close,1), ts_delta(volume,1), 20)
+neg(ts_corr(ts_delta(close,1), ts_delta(volume,1), 20))
+rank(neg(ts_corr(ts_delta(close,5), ts_delta(volume,5), 10)))
+```
+
+但 DSL 中 `ts_corr` 的 arg_types 是 `['field','field','num']`，要求前两参数
+是字段名而非算子表达式（与 WorldQuant Brain 一致，避免任意嵌套导致
+复杂度爆炸）。LLM 不知道这个限制——这是 **prompt 协议未告知算子参数类型
+约束**导致，属**第二层 P0**（修复后暴露的新协议缺陷），非 LLM 固有能力。
+
+**裁决（协议修复后）**：
+
+| 维度 | 结论 |
+|---|---|
+| 4 处原始 P0 协议修复 | ✅ 全部生效（0 parse_error / neg 接受 / 字段约束 / max_tokens 充足） |
+| §4.3.1 命题（真实 LLM n_passed>0） | ❌ **仍证伪**（n_passed=0），但根因清晰为**第二层协议缺陷**（算子参数类型约束未在 prompt 中告知），非 LLM 固有不可行 |
+| M6 multi-agent | ⏸ 暂缓，需先修第二层 P0（prompt 明示算子参数类型）后再次重跑 |
+
+**第二层 P0（进入 M6 前必修）**：
+
+| 项 | 说明 |
+|---|---|
+| P0-2 | prompt 明示每个算子的参数类型约束（field vs expr vs num）：例如 `ts_corr(field, field, num)` 不接受嵌套算子表达式；或扩 DSL 让 `ts_corr` 也接受 expr 参数（架构权衡，需独立评估） |
+| P1-2 | 引导 LLM 先产简单因子（如 `rank(ts_delta(close,5))`），再演化复杂度——multi-agent 的"广度→深度"流程本身就是这条路径 |
+
 ### 5.1 局限
 
 - **样本量小**：budget=15 实际只完成 9 轮（API 长挂），无法排除「再多跑几轮会偶然产出合法 DSL」的可能。
@@ -143,7 +231,8 @@ LLM 输出可解析后，`dsl_expr` 仍被 Sandbox 拒。典型非法形式：
 | 维度 | 结论 |
 |---|---|
 | §11 M3 工程 Done | ✅ 验收 6/6 绿（mock LLM 确定性），DSL/Sandbox/Tester/Agent/Tracker/breadth 全部可用 |
-| §4.3.1 命题（真实 LLM） | ❌ 证伪（n_passed=0），根因为工程协议缺陷，非 LLM 固有 |
-| M6 multi-agent | ⏸ 暂缓，先修 P0 协议项后重跑本裁决为前置门禁 |
+| §4.3.1 命题（真实 LLM，原始协议） | ❌ 证伪（n_passed=0，9/9 llm_parse_error），根因为 4 处 P0 工程协议缺陷 |
+| §4.3.1 命题（真实 LLM，P0 修复后重跑） | ❌ **仍证伪**（n_passed=0，11/12 dsl_eval_error），4 处 P0 全部生效；新根因为**第二层 P0**（算子参数类型约束未告知 LLM） |
+| M6 multi-agent | ⏸ 暂缓，需先修第二层 P0（prompt 明示算子参数类型 / DSL 接受 expr 参数）后再次重跑为前置门禁 |
 
-**工程层 M3 完成；命题层在当前协议下未通过诚实裁决，根因明确可修。**
+**工程层 M3 完成；命题层经两轮诚实裁决均未通过——首轮是协议 bug，次轮是 LLM 行为与 DSL 算子签名约束的下一层不匹配，根因仍可修。**
