@@ -126,17 +126,20 @@ def rank_ic_series(
 def information_ratio(ic_series: pd.Series, lag: int = 1) -> tuple[float, float]:
     """IR + Newey-West 调整 t 统计（设计 v0.5 §4.2.3）。
 
+    - 先 dropna：NaN 不污染均值/方差估计（小 symbol 数 panel 截面会产 NaN IC）
     - IR = mean(ic) / std(ic)（样本 std，ddof=0）
     - newey_west_t = mean(ic) / nw_std，nw_std 由 HAC 估计均值的方差：
       Var(mean) = (1/n) * [gamma0 + 2*sum_{l=1..lag} (1 - l/(lag+1)) * gamma_l]
       gamma_l = (1/n) * sum_{t=l+1..n} (x_t-mean)(x_{t-l}-mean)
-    - lag >= 1；样本数 < lag + 2 返回 (nan, nan)
+    - lag >= 1；dropna 后样本数 < lag + 2 返回 (nan, nan)
     - 返回 (ir, t_stat)
     """
-    ic = ic_series.to_numpy(dtype=float)
-    n = len(ic)
-    if n < lag + 2 or lag < 1:
+    s = ic_series.dropna()
+    if lag < 1 or len(s) < lag + 2:
         return float("nan"), float("nan")
+
+    ic = s.to_numpy(dtype=float)
+    n = len(ic)
 
     mean = float(ic.mean())
     std = float(ic.std(ddof=0))

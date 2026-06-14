@@ -302,6 +302,63 @@ def test_ir_insufficient_sample_nan():
 
 
 # ---------------------------------------------------------------------------
+# B2-3b. ic_series 含 NaN：先 dropna 再算（修 panel 触发的 correctness bug）
+# ---------------------------------------------------------------------------
+def test_ir_with_nan_drops_then_computes():
+    """ic_series 含 NaN → 等价于 dropna 后的 IR/t（手算对照）。
+
+    8-symbol panel 触发的 correctness bug：rank_ic_series 在样本不足截面产 NaN，
+    information_ratio 直接对含 NaN 的 Series 算 mean/std → nan 污染 → 返回
+    (nan,nan)。修复后应先 dropna，仅在 dropna 后样本过短才返回 (nan,nan)。
+    """
+    # 完整序列（60 点）的参考 IR/t
+    ic = np.array(
+        [0.05, 0.07, 0.04, 0.06, 0.08, 0.05, 0.03, 0.04, 0.05, 0.06,
+         0.07, 0.05, 0.04, 0.06, 0.05, 0.07, 0.08, 0.05, 0.04, 0.05,
+         0.06, 0.07, 0.05, 0.04, 0.05, 0.06, 0.07, 0.05, 0.04, 0.05,
+         0.06, 0.07, 0.05, 0.04, 0.05, 0.06, 0.07, 0.05, 0.04, 0.05,
+         0.06, 0.07, 0.05, 0.04, 0.05, 0.06, 0.07, 0.05, 0.04, 0.05,
+         0.06, 0.07, 0.05, 0.04, 0.05, 0.06, 0.07, 0.05, 0.04, 0.05]
+    )
+    ic_full = pd.Series(ic)
+    ir_ref, t_ref = information_ratio(ic_full, lag=1)
+
+    # 把中间若干点替换为 NaN（模拟某些截面样本不足产 NaN）
+    ic_with_nan = ic_full.copy()
+    ic_with_nan.iloc[[3, 7, 15, 22, 31]] = np.nan
+
+    # 期望：dropna 后重新算（与手算一致）
+    dropped = ic_with_nan.dropna().to_numpy()
+    mean_d = dropped.mean()
+    std_d = dropped.std(ddof=0)
+    expected_ir = mean_d / std_d
+    expected_t = mean_d / _manual_nw_std(dropped, lag=1)
+
+    ir, t = information_ratio(ic_with_nan, lag=1)
+    np.testing.assert_allclose(ir, expected_ir, rtol=1e-9)
+    np.testing.assert_allclose(t, expected_t, rtol=1e-9)
+    # 与 full 不等（去掉了若干点）
+    assert not np.isclose(ir, ir_ref, rtol=1e-9) or not np.isclose(t, t_ref, rtol=1e-9)
+
+
+def test_ir_all_nan_returns_nan_pair():
+    """ic_series 全 NaN → dropna 后空，返回 (nan,nan)。"""
+    all_nan = pd.Series([np.nan, np.nan, np.nan, np.nan])
+    ir, t = information_ratio(all_nan, lag=1)
+    assert np.isnan(ir)
+    assert np.isnan(t)
+
+
+def test_ir_nan_leaves_too_few_returns_nan_pair():
+    """ic_series dropna 后长度 < lag+2 → (nan,nan)。"""
+    # 4 个点含 2 个 NaN，dropna 后只剩 2 点，lag=1 要求 ≥3
+    short_with_nan = pd.Series([0.1, np.nan, np.nan, 0.2])
+    ir, t = information_ratio(short_with_nan, lag=1)
+    assert np.isnan(ir)
+    assert np.isnan(t)
+
+
+# ---------------------------------------------------------------------------
 # B2-4. 分层单调性
 # ---------------------------------------------------------------------------
 def test_decile_returns_monotone():
