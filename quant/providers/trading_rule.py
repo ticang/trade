@@ -126,11 +126,11 @@ class TradingRuleProvider:
         conflicts: list[str] = []
         for key, group in groups.items():
             group.sort(key=lambda r: r["effective_from"])
-            for i in range(len(group)):
-                for j in range(i + 1, len(group)):
-                    msg = _overlap_desc(key, group[i], group[j])
-                    if msg:
-                        conflicts.append(msg)
+            # 区间按 from 排序后：任意相交 ⟺ 相邻相交
+            for i in range(len(group) - 1):
+                msg = _overlap_desc(key, group[i], group[i + 1])
+                if msg:
+                    conflicts.append(msg)
         return conflicts
 
 
