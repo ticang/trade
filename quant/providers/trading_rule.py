@@ -14,6 +14,7 @@ import json
 import sqlite3
 from typing import Optional, Sequence
 
+from quant.data.instrument import Instrument
 from quant.data.models import TradingRule
 from quant.data.sqlite_store import SqliteStore
 
@@ -21,16 +22,23 @@ from quant.data.sqlite_store import SqliteStore
 def classify_symbol(symbol: str) -> tuple[str, str, str]:
     """symbol→(market,board,product_type) 简化映射。
 
-    A 股前缀规则（M0 简化，M0.5 完善）：
+    A 股前缀规则（设计 v0.5 §4.1.3）：
     - 688xxx→(SSE,star,stock)  科创板
     - 6xxxxx→(SSE,main,stock)  沪市主板
     - 30xxxx→(SZSE,chinext,stock)  创业板
     - 00xxxx→(SZSE,main,stock)  深市主板
     - 8xxxxx/9xxxxx→(BSE,main,stock)  北交所
     - 以 5 开头→(ETF,etp,fund)  基金（简化）
+    - 可转债独立代码段：11x/113x/123x→(BOND,bond,bond)
     - 其他→(SSE,main,stock)  默认
+
+    ST/退市/跨境 ETF 等时变或基础数据维度无法从前缀推断，
+    须用 classify_with_instrument 配合 instrument 数据精分类。
     """
     s = symbol.strip()
+    # 可转债：沪市 11x、深市 123x、公募可交债 113x 等（设计 §4.1.3）
+    if s.startswith(("110", "113", "123")):
+        return ("BOND", "bond", "bond")
     if s.startswith("688"):
         return ("SSE", "star", "stock")
     if s.startswith("6"):
@@ -44,6 +52,32 @@ def classify_symbol(symbol: str) -> tuple[str, str, str]:
     if s.startswith("5"):
         return ("ETF", "etp", "fund")
     return ("SSE", "main", "stock")
+
+
+def classify_with_instrument(
+    symbol: str,
+    on: datetime.date,
+    instrument: dict[str, Instrument] | None,
+) -> tuple[str, str, str]:
+    """经 instrument 数据精分类（供 rules_for 使用）。
+
+    - instrument 提供 且 symbol 命中：以 instrument.market/board/product_type 为准；
+      * instrument[symbol].is_st(on) → board 改 'st'（命中 st_main 规则）
+      * instrument[symbol].etf_crossborder → board 改 'etp_crossborder'
+      （ST 与跨境 ETF 互斥：跨境 ETF 无 ST，优先级不影响结果）
+    - 否则（instrument 为 None 或 symbol 未命中）回退 classify_symbol(symbol)。
+    """
+    if instrument is None:
+        return classify_symbol(symbol)
+    inst = instrument.get(symbol)
+    if inst is None:
+        return classify_symbol(symbol)
+    market, board, product_type = inst.market, inst.board, inst.product_type
+    if inst.is_st(on):
+        board = "st"
+    elif inst.etf_crossborder:
+        board = "etp_crossborder"
+    return (market, board, product_type)
 
 
 class TradingRuleProvider:
