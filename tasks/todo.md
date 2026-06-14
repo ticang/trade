@@ -140,3 +140,10 @@
 - [ ] 实现交易日历调休补班 overlay（v0.5 §4.1.3 已预留机制）
 - [ ] 在中国网络环境复验 AkShare 日线字段，确认数据源选型
 - [ ] DuckDB 全市场 5300 票规模实测（M-1a 用 1000 票代表规模外推）
+
+---
+
+## M0 延期待办（M-1a 带入，非阻断）
+
+- AkShare 中国网络复验：M-1a 探测 eastmoney 出口不可达，需在中国网络环境下复验 akshare 字段完整性（M2 实盘前必做）。
+- 调休 overlay 维护：quant/providers/calendar.py 的 MAKEUP_TRADING_DAYS 为人工维护，需按交易所年度公告同步补录 2025+ 补班日。
