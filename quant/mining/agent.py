@@ -73,9 +73,21 @@ class SingleAgentMine:
         candidates: list[dict] = []
         failures: list[dict] = []
         known = known_factors or []
-        messages = hypothesis_prompt(topic, known, hypothesis_budget)
+        # 可用算子 = Sandbox 白名单（_REGISTRY keys）；字段 = panel 列（排除分组键）
+        available_operators = sorted(self.sandbox.ALLOWED)
+        meta_cols = {"symbol", "trade_date"}
+        available_fields = [c for c in panel.columns if c not in meta_cols]
 
         for i in range(hypothesis_budget):
+            # 每轮重新构造 prompt：明确「本轮只产 1 条」+ 算子/字段清单 + 轮次标识
+            messages = hypothesis_prompt(
+                topic=topic,
+                factors_known=known,
+                available_operators=available_operators,
+                available_fields=available_fields,
+                round_idx=i,
+                budget=hypothesis_budget,
+            )
             # LLM 输出不可解析（非对象 / JSON 数组 / 空内容）→ 记 failure，不崩
             try:
                 item = self.llm.complete_json(messages)

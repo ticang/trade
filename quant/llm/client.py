@@ -97,7 +97,7 @@ class LLMClient:
         messages: list[dict],
         *,
         temperature: float = 0.0,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
         **kw,
     ) -> str:
         """OpenAI 兼容 chat.completions.create，返回 choices[0].message.content。"""

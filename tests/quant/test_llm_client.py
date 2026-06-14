@@ -131,7 +131,14 @@ def test_temperature_default_zero():
 
 def test_prompt_templates_structure():
     """hypothesis_prompt 返回 list[dict]，含 system 与 user role。"""
-    msgs = prompt.hypothesis_prompt(topic="低波动", factors_known=["rank(close)"], budget=3)
+    msgs = prompt.hypothesis_prompt(
+        topic="低波动",
+        factors_known=["rank(close)"],
+        available_operators=["rank", "ts_mean"],
+        available_fields=["close", "volume"],
+        round_idx=0,
+        budget=3,
+    )
     assert isinstance(msgs, list)
     assert all(isinstance(m, dict) for m in msgs)
     roles = [m["role"] for m in msgs]
@@ -139,6 +146,71 @@ def test_prompt_templates_structure():
     # judge_prompt 同样结构
     jmsgs = prompt.judge_prompt({"hypothesis": "x", "dsl_expr": "rank(close)"})
     assert isinstance(jmsgs, list) and all(isinstance(m, dict) for m in jmsgs)
+
+
+def test_hypothesis_prompt_requests_one_hypothesis():
+    """prompt 明确「产出 1 条」而非诱导返回 N 条数组。"""
+    msgs = prompt.hypothesis_prompt(
+        topic="量价动量",
+        factors_known=[],
+        available_operators=["rank", "ts_mean", "mul"],
+        available_fields=["close", "volume"],
+        round_idx=2,
+        budget=12,
+    )
+    user_text = msgs[-1]["content"]
+    # 含「1 条」/「一条」字样（中文数字兼容）
+    assert ("1 条" in user_text) or ("一条" in user_text)
+    # 不应诱导返回整个 budget 数组
+    assert f"{12} 条" not in user_text
+    assert "请输出" in user_text
+
+
+def test_hypothesis_prompt_lists_operators_and_fields():
+    """prompt 附可用算子清单与 panel 字段清单，约束 LLM 输出。"""
+    msgs = prompt.hypothesis_prompt(
+        topic="量价动量",
+        factors_known=[],
+        available_operators=["rank", "ts_mean", "mul"],
+        available_fields=["close", "volume"],
+        round_idx=0,
+        budget=10,
+    )
+    user_text = msgs[-1]["content"]
+    assert "rank" in user_text
+    assert "ts_mean" in user_text
+    assert "mul" in user_text
+    assert "close" in user_text
+    assert "volume" in user_text
+
+
+def test_hypothesis_prompt_has_dsl_syntax_example():
+    """prompt 含 DSL 语法示例（函数式 + add/mul 而非中缀），提示一元负号用 neg。"""
+    msgs = prompt.hypothesis_prompt(
+        topic="量价动量",
+        factors_known=[],
+        available_operators=["rank", "ts_mean", "mul", "neg"],
+        available_fields=["close"],
+        round_idx=0,
+        budget=10,
+    )
+    user_text = msgs[-1]["content"]
+    assert "mul(" in user_text  # 强调函数式而非 *
+    assert "neg" in user_text   # 提示负号 → neg
+
+
+def test_complete_max_tokens_default_4096():
+    """complete 默认 max_tokens=4096（修复 1024 截断）。"""
+    c = _make_client_with_fake("ok")
+    c.complete([{"role": "user", "content": "hi"}])
+    assert c._client.chat.completions.last_kwargs["max_tokens"] == 4096
+
+
+def test_complete_json_max_tokens_default_4096():
+    """complete_json 也走 4096 默认。"""
+    c = _make_client_with_fake('{"a":1}')
+    c.complete_json([{"role": "user", "content": "hi"}])
+    assert c._client.chat.completions.last_kwargs["max_tokens"] == 4096
 
 
 @pytest.mark.network

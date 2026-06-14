@@ -87,14 +87,19 @@ def _returns_panel_aligned(close_panel: pd.DataFrame, slope: float = 0.001) -> p
 # Mock LLM：complete_json 按序列返回假设
 # ---------------------------------------------------------------------------
 class _MockLLM:
-    """替身 LLMClient：complete_json 按计数器返回假设；model 固定。"""
+    """替身 LLMClient：complete_json 按计数器返回假设；model 固定。
+
+    同时记录每次调用收到的 messages，供 prompt 协议测试断言。
+    """
 
     def __init__(self, hypotheses: list[dict]):
         self._items = list(hypotheses)
         self._idx = 0
         self.model = "mock-model"
+        self.calls: list[list[dict]] = []
 
     def complete_json(self, messages: list[dict], **kw) -> dict:
+        self.calls.append(messages)
         item = self._items[self._idx % len(self._items)]
         self._idx += 1
         return item
@@ -234,3 +239,31 @@ def test_real_llm_run(tester, tracker, close_panel, returns_panel):
     res = agent.run("低波动反转", close_panel, returns_panel, hypothesis_budget=2, seed=0)
     assert isinstance(res, MineResult)
     assert res.n_hypotheses == 2
+
+
+# ---------------------------------------------------------------------------
+# prompt 协议：每轮 1 条 + 算子/字段清单约束（修 4 P0）
+# ---------------------------------------------------------------------------
+def test_run_passes_one_per_round_prompt(tester, tracker, close_panel, returns_panel):
+    """agent 每轮调 hypothesis_prompt，user 内容含「1 条」+ 字段清单 close。"""
+    llm = _MockLLM([_hypothesis("rank(close)")])
+    agent = SingleAgentMine(llm, tester, tracker)
+    agent.run("动量", close_panel, returns_panel, hypothesis_budget=2, seed=0)
+    assert len(llm.calls) == 2
+    for msgs in llm.calls:
+        user_text = msgs[-1]["content"]
+        assert ("1 条" in user_text) or ("一条" in user_text)
+        # 字段清单含 close（panel 实际字段）
+        assert "close" in user_text
+        # 算子清单含 rank（_REGISTRY key）
+        assert "rank" in user_text
+
+
+def test_run_prompt_changes_per_round(tester, tracker, close_panel, returns_panel):
+    """每轮 prompt 携带 round_idx（第 N 轮/M 中），区分调用轮次。"""
+    llm = _MockLLM([_hypothesis("rank(close)")])
+    agent = SingleAgentMine(llm, tester, tracker)
+    agent.run("动量", close_panel, returns_panel, hypothesis_budget=3, seed=0)
+    texts = [msgs[-1]["content"] for msgs in llm.calls]
+    # 三轮 user 内容应能区分（含轮次索引 0/1/2 之一）
+    assert any("第 0 轮" in t or "轮 0" in t or "0/3" in t or "1/3" in t for t in texts)
