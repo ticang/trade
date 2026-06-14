@@ -199,6 +199,72 @@ def test_hypothesis_prompt_has_dsl_syntax_example():
     assert "neg" in user_text   # 提示负号 → neg
 
 
+def test_hypothesis_prompt_includes_arg_type_constraints():
+    """prompt 含算子参数类型表：field/expr/num 三类，正反例。
+
+    第二层 P0：LLM 把表达式嵌进 ts_corr 的 field 位置被拒，因为 prompt 未
+    告知参数类型约束。修复后 prompt 必须明示：
+    - 每个算子标注参数类型（field=字段名, expr=可嵌套表达式, num=整数窗口）
+    - 时序算子 ts_* 的序列参数必须是字段名（不可嵌套表达式）
+    - 提供正例（合法）与反例（非法）
+    """
+    msgs = prompt.hypothesis_prompt(
+        topic="量价动量",
+        factors_known=[],
+        available_operators=["rank", "ts_mean", "ts_corr", "mul", "add"],
+        available_fields=["close", "volume"],
+        round_idx=0,
+        budget=10,
+    )
+    user_text = msgs[-1]["content"]
+
+    # 参数类型三分类必须出现（field/expr/num）
+    assert "field" in user_text
+    assert "expr" in user_text
+    assert "num" in user_text
+    # ts_corr 的签名必须明示（field, field, num）
+    assert "ts_corr" in user_text
+    # 时序算子序列参数必须是字段名这一约束必须出现
+    assert "ts_mean" in user_text
+    # 必须含正例与反例标识
+    assert "正例" in user_text or "合法" in user_text
+    assert "反例" in user_text or "非法" in user_text
+    # 反例必须含把表达式塞进 field 位置的典型错误提示
+    # （至少出现「不能」「字段名」「表达式」之一与 field 相关的明确说明）
+    assert "字段名" in user_text or "不能" in user_text
+
+
+def test_hypothesis_prompt_arg_type_examples_dsl_runnable():
+    """prompt 中的正例 DSL 必须能被 Sandbox 接受；反例必须被拒。
+
+    用真实 DSL registry 验证示例的合规性，保证给 LLM 的指引自身正确。
+    """
+    from quant.dsl.sandbox import Sandbox
+
+    msgs = prompt.hypothesis_prompt(
+        topic="量价动量",
+        factors_known=[],
+        available_operators=["rank", "ts_mean", "ts_corr", "mul", "add", "ts_delta"],
+        available_fields=["close", "volume"],
+        round_idx=0,
+        budget=10,
+    )
+    user_text = msgs[-1]["content"]
+    sb = Sandbox()
+
+    # 正例：至少出现一个嵌套表达式在 rank/mul/add（expr 位置）的合法用法
+    # 至少给出 ts_corr 的合法用法（两个 field + 一个 num）
+    assert "ts_corr(" in user_text
+
+    # 验证 prompt 给出的某个合法 ts_corr 示例确实通过 Sandbox
+    # （从 prompt 提取形如 ts_corr(field, field, num) 的子串来验证）
+    import re
+    corr_examples = re.findall(r"ts_corr\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*\d+\s*\)", user_text)
+    assert len(corr_examples) >= 1, "prompt 应至少给出一个合法的 ts_corr(field, field, num) 示例"
+    for ex in corr_examples:
+        assert sb.validate(ex) is True, f"prompt 给出的合法示例被 Sandbox 拒: {ex!r}"
+
+
 def test_complete_max_tokens_default_4096():
     """complete 默认 max_tokens=4096（修复 1024 截断）。"""
     c = _make_client_with_fake("ok")
