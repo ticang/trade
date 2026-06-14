@@ -30,6 +30,9 @@ from quant.factor.eval import (
 class TestConfig:
     """门禁阈值（设计 v0.5 §4.2.4）。"""
 
+    # 业务类名以 Test 开头但非 pytest 测试类，标记跳过采集
+    __test__ = False
+
     bh_fdr_alpha: float = 0.05          # BH-FDR 显著水平
     min_ic: float = 0.03                # 经济显著 IC 下限
     min_ir: float = 0.5                 # 经济显著 IR 下限
@@ -42,6 +45,9 @@ class TestConfig:
 class TestResult:
     """单因子全门禁结果。"""
 
+    # 业务类名以 Test 开头但非 pytest 测试类，标记跳过采集
+    __test__ = False
+
     passed: bool
     ic: float
     ir: float
@@ -53,6 +59,8 @@ class TestResult:
 
 class Tester:
     """全门禁测试器：IC / IR / BH-FDR / 新颖性 / 经济显著 五门。"""
+
+    __test__ = False  # 业务类名以 Test 开头但非 pytest 测试类，标记跳过采集
 
     def __init__(self, config: TestConfig | None = None):
         self.config = config or TestConfig()

@@ -100,6 +100,8 @@ class Composer:
 class TesterRole:
     """薄封装 M3 Tester，承接 Composer 的因子值。"""
 
+    __test__ = False  # 业务类名以 Test 开头但非 pytest 测试类，标记跳过采集
+
     def __init__(self, tester: Tester | None = None):
         self.tester = tester or Tester()
 
