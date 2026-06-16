@@ -17,8 +17,9 @@
 
 | 套件 | 结果 |
 |---|---|
-| 后端 `pytest tests/ -m "not slow and not network"` | **449 passed, 1 xfailed, 6 deselected** |
+| 后端 `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` | **648 passed, 4 deselected, 21 warnings** |
 | M-1b/M2 验收（mock） | 10/10 绿，确定性（seed=2024） |
+| P1 连续 20 交易日模拟盘 | **1/1 绿**：20 日、2 账户、5 主板标的，StrategyRunner→SimBrokerLive→on_fill→日终 reconcile |
 | Windows QMT 安全 probe 单测 | **5 passed** |
 | Windows QMT live probe | **pass**：Python 包可导入，行情只读读取 PASS，trader 只读握手 PASS |
 | QMT/M2 mock + adapter 回归 | **39 passed** |
@@ -52,6 +53,7 @@
 
 ### §11 M2 集成（mock 行情）
 - ✅ 信号→因子→策略→SimBrokerLive→on_fill→持仓闭环；对账 diff<0.1%；多账户隔离；去重背压；交接；Windows-only 标注
+- ✅ 连续 20 交易日模拟盘验收：固定 seed 合成行情，20 日 × 2 账户 × 5 主板标的，使用 `StrategyRunner.on_fills` 派发成交，日终 reconcile 全部 `diff_rate < 0.1%`，多账户订单/持仓隔离正确。
 
 ---
 
@@ -80,7 +82,7 @@
 2. 真实下单延迟绝对值（mock 下 <100ms，live 阈值实测）
 3. xttrader 断线指数退避重连（当前靠析构+新建实例；可补显式 reconnect API）
 4. xt API 签名回归（order_stock/cancel_order_stock 字段名，真实样本校验）
-5. 连续 20 交易日实盘对账差异 <0.1%（§11 M2 真值）
+5. 连续 20 交易日实盘对账差异 <0.1%（模拟盘已过；真实 QMT/券商回报仍需 live 真值）
 
 **操作**：Windows 打开并登录 QMT 终端 → `.env` 配置必要 QMT 路径与账户标识 → 先运行只读 probe → 再运行 `python -m pytest tests/quant/test_m1b_m2_acceptance.py`（移除 mock，接真实 xtquant）→ 跑 live。
 
@@ -88,4 +90,4 @@
 
 ## 4. 结论
 
-**M-1b/M2 代码层全部完成并通过 mock 验收**：行情网关（PIT/线程桥/去重/背压/QmtGateway）+ 执行层（Broker/状态机/订单簿/SimBrokerLive/QmtBroker per-account）+ 对账 + DuckDB 交接 + M-1b 探测 mock + M2 闭环 mock。Windows 阶段已确认 `xtquant` Python 包、核心模块、只读行情读取、trader 只读握手与 broker 只读查询路径可用。仍未做真实下单/撤单/断线恢复/连续 20 交易日模拟盘验证；这些必须在模拟盘计划下单独执行。
+**M-1b/M2 代码层全部完成并通过 mock/模拟盘验收**：行情网关（PIT/线程桥/去重/背压/QmtGateway）+ 执行层（Broker/状态机/订单簿/SimBrokerLive/QmtBroker per-account）+ 对账 + DuckDB 交接 + M-1b 探测 mock + M2 闭环 mock + 连续 20 交易日模拟盘验收。Windows 阶段已确认 `xtquant` Python 包、核心模块、只读行情读取、trader 只读握手与 broker 只读查询路径可用。仍未做真实下单/撤单/断线恢复/连续 20 交易日真实 QMT 回报对账；这些必须在 live/实盘灰度计划下单独执行。

@@ -378,7 +378,7 @@
 
 ### P1：进入模拟盘/准实盘前必须补齐
 - [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下只读行情/trader 握手已通过；真实订阅频率、回调线程、下单延迟、撤单、断线恢复仍需模拟盘阶段验证。
-- [ ] **连续 20 交易日模拟盘验收**：MarketDataGateway → FactorRegistry → StrategyRunner → Broker → on_fill → 持仓/对账闭环，对账差异 < 0.1%，多账户隔离正确。
+- [x] **连续 20 交易日模拟盘验收**：MarketDataGateway → FactorRegistry → StrategyRunner → Broker → on_fill → 持仓/对账闭环，对账差异 < 0.1%，多账户隔离正确。
 - [ ] **AkShare 中国网络复验**：M-1a 中 eastmoney 出口不可达，需在中国网络环境确认字段完整性与可用性。
 - [x] **DuckDB 全市场规模实测**：用当前沪深主板范围做 5300 票级别或当前 universe 规模实测，补延迟/写入报告。
 - [x] **交易日历调休维护**：`MAKEUP_TRADING_DAYS` 需要按交易所年度公告补录 2025+，并记录来源。
@@ -526,3 +526,54 @@
 ### 遗留提醒
 - 官方交易规则来源仍需 M0.5/M-1b 做人工快照与 verified 升级；本次未重新核验外部规则原文。
 - M2.5 API bridge 已实现；真实下单 POST 仍按 M4 门禁延后。
+
+---
+
+## P1 连续 20 交易日模拟盘验收计划（已完成）
+
+### 目标
+把当前 M2 mock 闭环从“短程机制验证”升级为明确的 **连续 20 个交易日模拟盘验收**：
+MarketDataGateway/mock bars → FactorRegistry → StrategyRunner → SimBrokerLive → on_fill → 持仓/订单快照 → 日终 reconcile，验证对账差异 `< 0.1%`、多账户隔离正确、策略 `on_fill` 真正被派发。
+
+### 影响范围
+- 测试：优先新增/扩展 `tests/quant/test_m2_20day_paper_acceptance.py`，避免把既有 `test_m1b_m2_acceptance.py` 继续拉长。
+- 代码：尽量复用现有 `FactorRegistry`、`StrategyRunner`、`SimBrokerLive`、`reconcile`；只有当测试暴露缺口时，才新增小型测试 helper 或最小生产代码。
+- 文档：更新 `tasks/todo.md` 与 `docs/review/2026-06-14-m1b-m2-verification.md` 的验收结论。
+
+### 任务清单
+- [x] **Task 1：写 20 日端到端失败验收**
+  - 构造固定 seed 合成行情，生成 20 个交易日、2 个账户、3-5 只沪深主板标的。
+  - 每日按顺序跑：bar 事件 → 因子面板 → `StrategyRunner.run` → 目标信号转订单 → `SimBrokerLive.place` → 收集 fills。
+  - 验证：必须跑满 20 日；每日至少有持仓/订单快照；最终产生成交且无未处理异常。
+
+- [x] **Task 2：补 `on_fill` 派发与策略状态断言**
+  - 使用 `StrategyRunner.on_fills` 派发当日成交，而不是测试里手动调用策略。
+  - 验证：策略收到的 fill 数与 broker 当日 fill 数一致；异常策略不阻断正常策略。
+
+- [x] **Task 3：补日终对账与多账户隔离断言**
+  - 每个账户每日用本地 fills 与 broker fills 跑 `reconcile`。
+  - 验证：20 日内每账户 `diff_rate < 0.001`；账户 A/B 的订单、持仓、client_order_id 去重集合互不串扰。
+
+- [x] **Task 4：补验收报告与状态更新**
+  - 更新 M1b/M2 verification 报告，区分“20 日模拟盘已通过”和“真实 QMT 下单/撤单/断线恢复仍待 live”。
+  - 更新 `tasks/todo.md`：若测试通过，将 P1 的“连续 20 交易日模拟盘验收”标为完成；保留 QMT 深度 live、AkShare 稳定复验、规则三方校对。
+
+### 验证方法
+- [x] `.venv\Scripts\python.exe -m pytest tests\quant\test_m2_20day_paper_acceptance.py -q`
+- [x] `.venv\Scripts\python.exe -m pytest tests\quant\test_m1b_m2_acceptance.py tests\quant\test_execution_sim_live.py tests\quant\test_execution_reconcile.py tests\quant\test_strategy_runner.py -q`
+- [x] `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q`
+- [x] `git diff --check`
+
+### Review
+**阶段结果（2026-06-16）**：
+- 新增 `tests/quant/test_m2_20day_paper_acceptance.py`，固定 seed 合成 24 个交易日行情，取其中 20 日作为验收段。
+- 验收链路：FactorRegistry(`momentum_3`) → StrategyRunner → SimBrokerLive → `StrategyRunner.on_fills` → 日终 `reconcile`。
+- 覆盖 2 个账户、5 个沪深主板样例标的；每账户跑满 20 日，产生成交与持仓快照；每日对账 `diff_rate < 0.1%`；多账户持仓/成交快照相等但对象隔离。
+- `SimBrokerLive` 新增只读 `fills()` 快照接口，供日终对账读取，不暴露可变内部状态。
+- 已关闭 P1 “连续 20 交易日模拟盘验收”项；QMT 深度 live、AkShare 稳定复验、规则三方校对仍未关闭。
+
+**验证**：
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_m2_20day_paper_acceptance.py -q` → 1 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_m1b_m2_acceptance.py tests\quant\test_execution_sim_live.py tests\quant\test_execution_reconcile.py tests\quant\test_strategy_runner.py tests\quant\test_m2_20day_paper_acceptance.py -q` → 33 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` → 648 passed, 4 deselected, 21 warnings。
+- `git diff --check` → passed。

@@ -93,6 +93,10 @@ class SimBrokerLive:
         """返回持仓快照副本。"""
         return dict(self._positions)
 
+    def fills(self) -> dict[str, FillResult]:
+        """返回成交回报快照副本，供日终对账读取。"""
+        return dict(self._fills)
+
     def account(self) -> dict:
         """账户资金（简化）。"""
         return {"cash": 0.0}
