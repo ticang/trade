@@ -4,7 +4,7 @@
 本文件验证三者协同：
 - load_rules 写入后 rules_for 多 symbol 多日期命中正确（复用 golden 事实）
 - check_no_overlap 全表空（种子区间互斥）
-- require_verified 实盘阻断语义：费用 provisional 阻断实盘返回 None
+- require_verified 实盘准入语义：规则与公共费率 source-audit 后命中
 - rules_for 返回真实 TradingRule 而非 None（M0 空表已升级为真数据）
 """
 from __future__ import annotations
@@ -59,22 +59,22 @@ def test_full_pipeline(store):
     assert p.check_no_overlap(rows) == []
 
 
-def test_require_verified_blocks_due_to_provisional_fees(store):
-    """种子规则结构 verified 但费用明细 provisional（§11）。
-
-    实盘路径（require_verified=True）应被阻断返回 None；
-    回测/展示路径（require_verified=False）命中返回规则。
-    """
+def test_require_verified_returns_rule_after_fee_source_audit(store):
+    """种子规则结构和公共费率 source-audit 后，实盘路径可命中规则。"""
     p = TradingRuleProvider(store)
     t = datetime.date(2024, 6, 14)
 
-    # 实盘：费用 provisional 阻断
-    assert p.rules_for("600519", t, require_verified=True) is None
+    live = p.rules_for("600519", t, require_verified=True)
+    assert live is not None
+    assert live.rule_id == "sse_main_stock"
 
-    # 回测/展示：不阻断，命中返回
     hit = p.rules_for("600519", t, require_verified=False)
     assert hit is not None
     assert hit.rule_id == "sse_main_stock"
+    payload = json.loads(hit.rule_json)
+    assert payload["fees"]["stamp"]["value"] == 0.0005
+    assert payload["fees"]["transfer"]["value"] == 0.00001
+    assert payload["fees"]["exchange"]["value"] == 0.0000341
 
 
 def test_rules_return_real_data_not_none(store):

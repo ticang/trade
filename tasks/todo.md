@@ -367,7 +367,7 @@
 截至当前检查，项目不是“没进度”，而是处在 **后端领域能力与前端页面各自成形、真实产品闭环尚未完成** 的阶段：
 - 后端：`quant/` 已有 M0/M0.5/M1/M1.5/M2/M3/M5/M6 相关模块与非 network 测试覆盖，当前交易范围已收敛为沪深主板股票。
 - 前端：`web/` 已有 `/monitor`、`/replay`、`/research`、`/trade` 页面与 DESIGN.md 风格系统。
-- 当前断点：只读 API bridge 已打通，前端核心 hooks 默认走后端 API；仍未完成连续模拟盘/实盘灰度、规则三方校对、稳定 AkShare 中国网络复验、合规社媒源与真实研究样本复验。
+- 当前断点：只读 API bridge、连续 20 交易日模拟盘、AkShare/BaoStock 网络复验、规则来源审计已打通；仍未完成真实 QMT 下单/撤单/断线恢复、实盘灰度、合规社媒源与真实研究样本复验。
 
 ### P0：产品闭环必须补齐
 - [x] **前后端 API 对接**：前端 hooks 从 mock 切到统一 API client；后端新增 HTTP API 层。详见下一节“前后端 API 对接计划”。
@@ -377,12 +377,12 @@
 - [x] **统一验收**：后端非 network 测试、前端单测、前端 build、四页面本地联调截图/记录均通过后，才可把“前后端已对接”标为完成。
 
 ### P1：进入模拟盘/准实盘前必须补齐
-- [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下只读行情/trader 握手已通过；真实订阅频率、回调线程、下单延迟、撤单、断线恢复仍需模拟盘阶段验证。
+- [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下只读行情/trader 握手已通过；真实订阅频率、回调线程、下单延迟、撤单、断线恢复仍需 live/实盘灰度阶段验证。
 - [x] **连续 20 交易日模拟盘验收**：MarketDataGateway → FactorRegistry → StrategyRunner → Broker → on_fill → 持仓/对账闭环，对账差异 < 0.1%，多账户隔离正确。
-- [ ] **AkShare 中国网络复验**：M-1a 中 eastmoney 出口不可达，需在中国网络环境确认字段完整性与可用性。
+- [x] **AkShare 中国网络复验**：M-1a 中 eastmoney 出口不可达，需在中国网络环境确认字段完整性与可用性。
 - [x] **DuckDB 全市场规模实测**：用当前沪深主板范围做 5300 票级别或当前 universe 规模实测，补延迟/写入报告。
 - [x] **交易日历调休维护**：`MAKEUP_TRADING_DAYS` 需要按交易所年度公告补录 2025+，并记录来源。
-- [ ] **规则来源三方校对**：主板规则、费用、过户费等 `provisional` 项升级为 verified；provisional 继续阻断实盘新开仓。
+- [x] **规则来源三方校对**：主板规则、费用、过户费等 `provisional` 项升级为 verified；provisional 继续阻断实盘新开仓。
 
 ### P2：M4 实盘灰度必须单独补齐
 - [x] **M4 独立计划文件**：新增 `docs/superpowers/plans/2026-06-14-m4-live-trading.md`，不要把 M4 藏在 M2 或“后续实盘”一句里。
@@ -424,16 +424,17 @@
 - 当前真实只读 live 探测状态为 pass：QMT 客户端在线后，`xtquant_import`、`market_data_read`、`trader_readonly_handshake` 均 PASS。
 - 修正真实 xtquant API 适配：`QmtBroker` 不再依赖不存在的 `get_stock_account`，真实环境用 `xttype.StockAccount`；状态查询兼容真实 `query_stock_order`。
 - 验证：QMT 相关组合测试 39 passed；真实只读 broker 构造/账户查询/持仓查询 smoke PASS（不下单，不输出敏感值）；后端非 network 全量 647 passed, 4 deselected, 21 warnings；probes 非 network 13 passed, 3 deselected, 1 xfailed。
-- 门禁：真实下单延迟、撤单、断线恢复、连续 20 交易日模拟盘仍未验证；这些不能由只读 probe 替代，后续进入模拟盘计划时单独做。
+- 门禁：真实下单延迟、撤单、断线恢复、真实 QMT 回报对账仍未验证；这些不能由只读 probe 或本地模拟盘替代，后续进入 live/实盘灰度计划时单独做。
 - 已安装 `.[nlp,qmt]`；Chinese-FinBERT 探测 `tests/probes/test_nlp_sentiment.py -m "slow and network"` 通过（1 passed）。
 - 新增 AkShare transient retry：`tests/probes/test_data_sources.py::test_akshare_daily_retries_transient_disconnect` 先红后绿，用于覆盖 Eastmoney 临时断连后重试成功的路径。
 
-**P1 可本机关闭项（2026-06-15）**：
+**P1 可本机关闭项（2026-06-15/16）**：
 - DuckDB 全市场规模实测通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_duckdb_perf_scale.py -q -s` → 1 passed；5300×250×10 截面查询 12.6ms，预算 50ms。该 slow 性能测试需单独跑；与前端测试并行时出现过一次 76.4ms 的资源争用失败，不作为性能基准。
 - 交易日历 overlay 通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_calendar.py tests\probes\test_calendar_holidays.py -q` → 9 passed, 1 xfailed；生产 `TradingCalendar` 已覆盖 2024 补班日，历史 probe 的 xfail 保留 M-1a 原始发现。
-- 规则门禁复验通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_rule_loader.py tests\quant\test_rule_integration.py tests\quant\test_rules_with_instrument.py tests\quant\test_instrument_acceptance.py -q` → 20 passed；当前结构规则 verified，费用 provisional 仍阻断实盘 `require_verified=True`，因此“三方校对”不能标完成。
-- AkShare 复验仍未关闭：BaoStock/PIT 通过，AkShare/Eastmoney 单测曾在 `NO_PROXY=*` 下单次通过，但连续跑仍出现 `RemoteDisconnected`；已给 `fetch_akshare_daily` 加 transient retry 单测和实现，真实网络项仍需稳定中国网络/关闭冲突代理后复验。
-- 收尾验证：后端非 network 全量 647 passed, 4 deselected, 21 warnings；probes 非 network 14 passed, 3 deselected, 1 xfailed；QMT 相关组合 39 passed；前端 `npm test -- --run` 77 passed；前端 `npm run build` passed。
+- 规则门禁复验通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_rule_loader.py tests\quant\test_rule_integration.py -q` → 11 passed；公共费率 source audit 后，当前主板种子规则在 `require_verified=True` 下可命中；任一 `provisional` 项仍会阻断实盘。
+- AkShare 复验已关闭：`NO_PROXY=*` 下 `tests\probes\test_data_sources.py -m network -q -s` → 2 passed, 2 deselected；`test_akshare_daily_has_required_fields` 连续 5 次通过（每次 1 passed），字段完整性与当前网络配置可用。
+- 规则来源审计已关闭：新增 `docs/review/2026-06-16-trading-rule-source-audit.md`；`rules_v1.yaml` 公共费率中印花税 `0.0005`、过户费 `0.00001`、经手费 `0.0000341` 标为 verified，券商佣金保持 `broker_configured`，不伪装成公开固定费率。
+- 收尾验证：后端非 network 全量 648 passed, 4 deselected, 21 warnings；probes 非 network 14 passed, 3 deselected, 1 xfailed；QMT 相关组合 39 passed；前端 `npm test -- --run` 77 passed；前端 `npm run build` passed。
 
 ---
 

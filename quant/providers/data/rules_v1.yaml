@@ -3,8 +3,10 @@
 # 置信策略（分层标注）：
 #   - 结构性规则（涨跌停/手数/T+1/最小变动）= source_confidence: verified
 #     结构权威，可作为回测、限价、手数计算依据。
-#   - 费用明细（印花税/过户费/佣金/经手费）= rule_json.fees.*._confidence: provisional
-#     费率随政策调整且与券商协定相关，尚未逐项核验生效日期，仅作占位参考，不作实盘费用依据。
+#   - 公共费用（印花税/过户费/经手费）= rule_json.fees.*._confidence: verified
+#     已按 2026-06-16 source audit 核验当前主板股票公共费率。
+#   - 券商佣金 = broker_configured
+#     不属于公开交易所规则，实盘以券商配置、成交回报和盘后对账为准。
 #
 # 当前仅录入：
 #   - 沪市主板股票
@@ -26,7 +28,7 @@
   product_type: stock
   effective_from: 2020-01-01
   effective_to: null
-  source_url: http://www.sse.com.cn/
+  source_url: https://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20250612_10781695.shtml
   source_confidence: verified
   rule_json:
     tick: 0.01
@@ -39,18 +41,18 @@
     fees:
       stamp:
         value: 0.0005
-        _confidence: provisional
+        _confidence: verified
       transfer:
         value: 0.00001
-        _confidence: provisional
+        _confidence: verified
       commission:
         value: null
-        _confidence: provisional
+        _confidence: broker_configured
       exchange:
-        value: null
-        _confidence: provisional
-  reviewed_by: null
-  reviewed_ts: null
+        value: 0.0000341
+        _confidence: verified
+  reviewed_by: source_audit
+  reviewed_ts: 2026-06-16
 
 # ============================================================
 # 深市主板股票
@@ -61,7 +63,7 @@
   product_type: stock
   effective_from: 2020-01-01
   effective_to: null
-  source_url: http://www.szse.cn/
+  source_url: https://www.szse.cn/lawrules/rule/trade/
   source_confidence: verified
   rule_json:
     tick: 0.01
@@ -74,18 +76,18 @@
     fees:
       stamp:
         value: 0.0005
-        _confidence: provisional
+        _confidence: verified
       transfer:
         value: 0.00001
-        _confidence: provisional
+        _confidence: verified
       commission:
         value: null
-        _confidence: provisional
+        _confidence: broker_configured
       exchange:
-        value: null
-        _confidence: provisional
-  reviewed_by: null
-  reviewed_ts: null
+        value: 0.0000341
+        _confidence: verified
+  reviewed_by: source_audit
+  reviewed_ts: 2026-06-16
 
 # ============================================================
 # ST 股票（主板，±5%）
@@ -98,7 +100,7 @@
   product_type: stock
   effective_from: 2020-01-01
   effective_to: null
-  source_url: http://www.szse.cn/
+  source_url: https://www.szse.cn/lawrules/rule/trade/
   source_confidence: verified
   rule_json:
     tick: 0.01
@@ -111,15 +113,15 @@
     fees:
       stamp:
         value: 0.0005
-        _confidence: provisional
+        _confidence: verified
       transfer:
         value: 0.00001
-        _confidence: provisional
+        _confidence: verified
       commission:
         value: null
-        _confidence: provisional
+        _confidence: broker_configured
       exchange:
-        value: null
-        _confidence: provisional
-  reviewed_by: null
-  reviewed_ts: null
+        value: 0.0000341
+        _confidence: verified
+  reviewed_by: source_audit
+  reviewed_ts: 2026-06-16

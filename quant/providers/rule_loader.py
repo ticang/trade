@@ -18,7 +18,7 @@ import yaml
 from quant.data.sqlite_store import SqliteStore
 from quant.providers.trading_rule import TradingRuleProvider
 
-# 种子 YAML：当前主板交易规则 v1（结构性规则 verified，费用明细 provisional）
+# 种子 YAML：当前主板交易规则 v1（结构性规则与公共费用 source-audit verified）
 DEFAULT_RULES_YAML = Path(__file__).parent / "data" / "rules_v1.yaml"
 
 # 写入列对齐 schema.trading_rule DDL

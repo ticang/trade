@@ -209,7 +209,7 @@
 - **客户端崩溃**：xttrader 心跳检测进程存活，崩溃告警 + "只平不开"安全态。
 - 断线指数退避重连。
 
-> ⚠ xtquant 已完成 Windows + QMT 登录态下的只读行情/trader 握手探测；订阅频率、真实回调线程、下单/撤单延迟、断线恢复与连续模拟盘对账仍待 M2/M4 门禁验证。
+> ⚠ xtquant 已完成 Windows + QMT 登录态下的只读行情/trader 握手探测；本地连续 20 交易日模拟盘对账已通过；订阅频率、真实回调线程、下单/撤单延迟、断线恢复与真实 QMT 回报对账仍待 M4 live 门禁验证。
 
 #### 4.1.2 情绪采集（分期）
 
@@ -464,7 +464,7 @@ TWAP/VWAP，按成交额与盘口深度自适应分片（零售通道有效性 M
 
 #### 4.7.2 交易摩擦
 
-佣金（配置化）、印花税（卖方 0.05%，**配置化以最新政策为准**）、过户费（**provisional，待中国结算原文快照确认**，按市场/品种/生效日配置）、滑点（成交额/波动率建模）。
+佣金（券商配置/成交回报/盘后对账）、印花税（卖方 0.05%，**配置化以最新政策为准**）、过户费（当前主板公共费率已 source-audit verified，按市场/品种/生效日配置）、经手费（当前主板公共费率已 source-audit verified）、滑点（成交额/波动率建模）。
 
 #### 4.7.3 A 股规则
 
@@ -766,9 +766,10 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | 申报数量规则 | 组合优化+风控 | 当前主板 100 股整数倍；科创/北交等后续扩展 |
 | 停牌/ST/退市（含整理期） | 基础数据+风控 | 标志+剔除 |
 | 除权除息扭曲 | 因子层 | 量价因子默认不复权+corporate action 调整；前复权须标注元数据 |
-| 过户费 | 撮合 | **provisional**（待中国结算原文快照），按市场/品种/生效日配置 |
-| 印花税（卖方 0.05%，配置化） | 撮合 | 以最新政策为准 |
-| 佣金（配置化） | 撮合 | 万 2.5/万 3 典型 |
+| 过户费 | 撮合 | 当前主板公共费率已 source-audit verified，按市场/品种/生效日配置 |
+| 印花税（卖方 0.05%，配置化） | 撮合 | 当前主板公共费率已 source-audit verified，仍以最新政策为准 |
+| 经手费 | 撮合 | 当前主板公共费率已 source-audit verified |
+| 佣金（配置化） | 撮合 | 券商配置/成交回报/盘后对账，非公开固定规则 |
 | 板块准入 | 风控 | 资格+风险准入 |
 | 盘后固定价格交易 | 调度+Broker | 预留，首期不用 |
 | 节假日调休 | 交易日历+调度 | exchange_calendars + 公告 overlay |
@@ -833,7 +834,7 @@ CREATE TABLE data_snapshot (snapshot_id VARCHAR, dataset VARCHAR, source VARCHAR
 | **M-1a 本地快速探测（1-3 天，go/no-go）** | DuckDB 横截面查询延迟（全市场×200 因子×N 天）；SQLite 单写队列吞吐；exchange_calendars 调休覆盖；**DSL 解释器能否跑通 rolling+rank+group_neutral 真实因子**；免费数据源字段完整性+PIT 可推导性；中文金融情绪模型（Chinese-FinBERT）效果 | 全本地无外部依赖；性能/字段/DSL 三项达标 → go |
 | **M-1b 外部通道探测（数周，并行）** | xtquant 开户（低门槛券商优先）、订阅频率、回调线程、下单延迟、客户端崩溃恢复、拆单成交质量 | 可开户/订阅所需频率/下单延迟<阈值 → go；否则换通道 |
 | **M0 基础设施** | 骨架、配置（部分热加载）、SQLite+DuckDB+Repository（多账户）、ProviderRegistry、事件总线、日志/指标、日历（调休）、基础数据、PIT 字段+事实字段、`trading_rule`、数据质量独立验证层、UI theme 从 `DESIGN.md` 映射 | 读写+PIT 断言+规则按日取值+质量门禁拦截+多账户隔离；单测通过；前端 theme/components 测试通过 |
-| **M0.5 交易规则子模块** | 规则表 v1 录入（沪深主板股票，2020 至今）+ **人工 golden cases 标注** + 三方校对 + 区间查询正确性 + source_confidence 体系；科创/创业/北交/ETF/可转债列为后续扩展 | 主板 fixture 100% 通过；区间查询无重叠命中；过户费等无权威项标 provisional 且阻断实盘 |
+| **M0.5 交易规则子模块** | 规则表 v1 录入（沪深主板股票，2020 至今）+ **人工 golden cases 标注** + 三方校对 + 区间查询正确性 + source_confidence 体系；科创/创业/北交/ETF/可转债列为后续扩展 | 主板 fixture 100% 通过；区间查询无重叠命中；已审计公共费率 verified；未知或新增 provisional 项继续阻断实盘 |
 | **M1 回测+因子+基础风控** | 因子引擎（中性化评价）+ 基础因子、回测引擎（撮合/摩擦/主板 A 股规则/一字板/T+1）、风控基础层、PIT 强制、snapshot 可复现、绩效归因（Shapley 简化版） | 工程正确性：主板规则 fixture 100%、look-ahead 0 报警、已知历史事件回放符合预期、同 snapshot 二次运行一致、连续 3 年（2020+）无异常；基准绩效仅 sanity check（不劣于同 universe buy-and-hold -X%） |
 | **M1.5 策略引擎** | Strategy/on_fill、多策略调度+隔离、组合优化器（主板 100 股整数化+gap 度量）、止损止盈、策略生命周期、再平衡、事件驱动模板、ctx 契约 | 多策略并行回测；优化约束满足；QP-vs-整数化 gap < 阈值；换手 ≤ 配置上限；生命周期状态机可迁移 |
 | **M2 模拟盘主线（多账户）** | 行情网关（线程桥接+事件总线+背压+去重）、Broker（SimBroker+QmtBroker per-account）、on_fill、xtquant 崩溃处理、DuckDB 写权交接、每日对账 | QMT 模拟**连续 20 交易日**（按日历，容忍 0 中断）跑通信号→下单→持仓→对账闭环；对账差异 < 0.1%；多账户隔离正确 |
@@ -966,16 +967,17 @@ class ProviderRegistry:
 
 | 主题 | 当前结论 | 来源 / 状态 |
 |---|---|---|
-| 上交所主板规则 | 当前只取主板股票有效规则；2026 修订 2026-07-06 生效，当前不得当已生效硬编码 | sse.com.cn 官方页（**pending**，M-1a 快照） |
-| 深交所主板规则 | 当前只取主板股票有效规则；M-1a 下载保存当前有效 + 2026 修订，不得只按上交所推断 | szse.cn（**pending**，旧 PDF URL 非现行） |
+| 上交所主板规则 | 当前只取主板股票有效规则；2026 修订 2026-07-06 生效，当前不得当已生效硬编码 | sse.com.cn 官方页（**verified**，2026-06-16 source audit） |
+| 深交所主板规则 | 当前只取主板股票有效规则；不得只按上交所推断 | szse.cn（**verified**，2026-06-16 source audit） |
 | 北交所/科创/创业/ETF/可转债规则 | 不进入当前阶段实盘范围；后续扩展前单独补来源快照、fixture 与验收 | bseinfo.net / sse.com.cn / szse.cn（**deferred**） |
 | 价格最小变动单位 | 当前主板股票 0.01 元；ETF/基金/可转债后续另表 | rule_json.price_tick by product_type |
 | 申报数量 | 当前主板 100 股整数倍；科创/北交等后续另表 | rule_json.quantity_rule + fixture |
 | 新股无涨跌幅 | 当前沪深主板注册制前 5 日；北交等后续另表 | rule_json.no_limit_window |
-| 印花税 | 2023-08-28 减半，卖方 0.05%，配置化 | 税务总局公告（**verified**） |
-| 过户费 | **provisional**，待中国结算原文快照确认 | 新华社/人民网转载（**provisional**，实盘前须升级 verified） |
+| 印花税 | 2023-08-28 减半，卖方 0.05%，配置化 | 税务系统公告转载（**verified**） |
+| 过户费 | 0.001%，双边，配置化 | 中国结算公告权威转载（**verified**） |
+| 经手费 | 0.00341%，双边，配置化 | 证监会降费安排（**verified**） |
 
-> 状态：verified / pending / provisional。M-1a 探测项之一：人工下载快照所有 URL 入 source_audit（checked_ts+checksum）。实盘前所有规则须 verified。
+> 状态：verified / pending / provisional。当前主板种子规则与公共费率已记录到 `docs/review/2026-06-16-trading-rule-source-audit.md`。实盘前所有规则须 verified；券商佣金属于 broker_configured，不按公开规则伪造固定值。
 
 ---
 

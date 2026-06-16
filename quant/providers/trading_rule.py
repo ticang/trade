@@ -98,7 +98,7 @@ class TradingRuleProvider:
         - False（默认，回测/展示）：命中即返回。
         - True（实盘）：命中后若规则不可完全信任则返回 None 阻断实盘。
           不可信任条件见 _is_live_ready（规则级 source_confidence 非 verified，
-          或 rule_json.fes 任一明细 _confidence=provisional）。
+          或 rule_json.fees 任一明细 _confidence=provisional）。
         """
         d = (
             decision_time.date()
@@ -210,7 +210,7 @@ def _is_live_ready(rule: TradingRule) -> bool:
     不可完全信任（返回 False）当且仅当任一成立：
     1. 规则级 source_confidence != "verified"（结构未权威）；或
     2. rule_json.fees 中任一明细的 _confidence == "provisional"
-       （如过户费等无权威项，阻断实盘）。
+       （公共费率未完成 source audit 时阻断实盘）。
     fees 缺失或某明细无 _confidence 键均不视为 provisional，不阻断。
     rule_json 解析失败按不可信任处理。
     """
