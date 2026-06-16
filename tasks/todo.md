@@ -377,7 +377,7 @@
 - [x] **统一验收**：后端非 network 测试、前端单测、前端 build、四页面本地联调截图/记录均通过后，才可把“前后端已对接”标为完成。
 
 ### P1：进入模拟盘/准实盘前必须补齐
-- [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下只读行情/trader 握手已通过；2026-06-16 指定账号只读查询、资产查询、模拟盘最小下单/撤单已通过；代码层已修正实时订阅契约，但现场 QMT 仍未推送回调；真实资金下单延迟、撤单、断线恢复仍需 live/实盘灰度阶段验证。
+- [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下 trader 只读握手、指定账号只读查询、资产查询、模拟盘最小下单/撤单已通过；代码层已修正实时订阅契约并增加轮询兜底，但现场 MiniQuote Python API 仍无有效 tick/分钟 bar，60 秒内仍未推送 Python 回调；真实资金下单延迟、撤单、断线恢复仍需 live/实盘灰度阶段验证。
 - [x] **连续 20 交易日模拟盘验收**：MarketDataGateway → FactorRegistry → StrategyRunner → Broker → on_fill → 持仓/对账闭环，对账差异 < 0.1%，多账户隔离正确。
 - [x] **AkShare 中国网络复验**：M-1a 中 eastmoney 出口不可达，需在中国网络环境确认字段完整性与可用性。
 - [x] **DuckDB 全市场规模实测**：用当前沪深主板范围做 5300 票级别或当前 universe 规模实测，补延迟/写入报告。
@@ -434,7 +434,7 @@
 - 规则门禁复验通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_rule_loader.py tests\quant\test_rule_integration.py -q` → 11 passed；公共费率 source audit 后，当前主板种子规则在 `require_verified=True` 下可命中；任一 `provisional` 项仍会阻断实盘。
 - AkShare 复验已关闭：`NO_PROXY=*` 下 `tests\probes\test_data_sources.py -m network -q -s` → 2 passed, 2 deselected；`test_akshare_daily_has_required_fields` 连续 5 次通过（每次 1 passed），字段完整性与当前网络配置可用。
 - 规则来源审计已关闭：新增 `docs/review/2026-06-16-trading-rule-source-audit.md`；`rules_v1.yaml` 公共费率中印花税 `0.0005`、过户费 `0.00001`、经手费 `0.0000341` 标为 verified，券商佣金保持 `broker_configured`，不伪装成公开固定费率。
-- QMT live 门禁复验：新增 `docs/review/2026-06-16-qmt-live-gate.md`；`probes.qmt_live` 带账号通过，QMT 适配层测试通过，持仓/委托/成交/资产只读查询可调用；交易侧正确路径为 `userdata`，模拟盘最小下单/撤单通过且无成交；代码层已修正 `subscribe_quote` 单标的契约、`subscribe_whole_quote` tick 全推路径和真实回调形态解析，但现场 QMT 仍未推送回调，M4 真实资金实盘门禁仍不能放行。
+- QMT live 门禁复验：新增 `docs/review/2026-06-16-qmt-live-gate.md`；`probes.qmt_live` 带账号通过，QMT 适配层测试通过，持仓/委托/成交/资产只读查询可调用；交易侧正确路径为 `userdata`，模拟盘最小下单/撤单通过且无成交；代码层已修正 `subscribe_quote` 单标的契约、`subscribe_whole_quote` tick 全推路径、真实回调形态解析，并增加 `get_full_tick`/`get_market_data_ex` 轮询兜底；现场主终端有行情 push，但 MiniQuote Python API `58610` 仍返回空 tick/空分钟 bar，60 秒内仍未推送 Python 回调，M4 真实资金实盘门禁仍不能放行。
 - 收尾验证：后端非 network 全量 648 passed, 4 deselected, 21 warnings；probes 非 network 14 passed, 3 deselected, 1 xfailed；QMT 相关组合 39 passed；前端 `npm test -- --run` 77 passed；前端 `npm run build` passed。
 
 ---

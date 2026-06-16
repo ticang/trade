@@ -21,7 +21,8 @@ from quant.gateway.thread_bridge import ThreadBridge
 # ---------------- fake xtquant 工厂 ----------------
 
 def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
-                          market_data_df: pd.DataFrame | None = None,
+                          market_data_df: object | None = None,
+                          full_tick: dict | None = None,
                           captured: dict | None = None) -> dict:
     """注入 fake xtquant.xtdata + xtquant.xttrader 到 sys.modules。
 
@@ -37,7 +38,10 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
         "run_called": False,
         "trader_instances": [],
         "last_callback": None,
-        "market_data_df": market_data_df if market_data_df is not None else pd.DataFrame(),
+        "market_data_df": (
+            market_data_df if market_data_df is not None else pd.DataFrame()
+        ),
+        "full_tick": full_tick if full_tick is not None else {},
     }
 
     # ---- fake xtdata ----
@@ -77,9 +81,18 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
         })
         return state["market_data_df"]
 
+    def get_full_tick(code_list):
+        state["full_tick_calls"] = state.get("full_tick_calls", 0) + 1
+        return {
+            code: state["full_tick"][code]
+            for code in code_list
+            if code in state["full_tick"]
+        }
+
     xtdata.subscribe_quote = subscribe_quote  # type: ignore[attr-defined]
     xtdata.subscribe_whole_quote = subscribe_whole_quote  # type: ignore[attr-defined]
     xtdata.get_market_data_ex = get_market_data_ex  # type: ignore[attr-defined]
+    xtdata.get_full_tick = get_full_tick  # type: ignore[attr-defined]
     xtdata.run = run  # type: ignore[attr-defined]
 
     # ---- fake xttrader ----
@@ -297,6 +310,70 @@ def test_subscribe_callback_handles_xtdata_batched_shape(monkeypatch):
     assert bar["close"] == 10.0
 
 
+def test_poll_fallback_bridges_full_tick_when_terminal_does_not_push(monkeypatch):
+    """QMT 不推 subscribe 回调时，轮询 full tick 也能产出 on_bar。"""
+    full_tick = {
+        "600519.SH": {
+            "time": 1710489600000,
+            "lastPrice": 10.0,
+            "open": 9.8,
+            "high": 10.2,
+            "low": 9.7,
+            "volume": 100000,
+            "amount": 1000000.0,
+        }
+    }
+    _install_fake_xtquant(monkeypatch, full_tick=full_tick)
+    mock_bridge = MagicMock(spec=ThreadBridge)
+    gw = QmtGateway(
+        path="/tmp/qmt",
+        session_id=1,
+        bridge=mock_bridge,
+        poll_interval=0,
+        start_polling=False,
+    )
+    gw.subscribe(["600519.SH"], "tick", MagicMock())
+
+    gw.poll_once()
+
+    mock_bridge.bridge.assert_called_once()
+    bar = mock_bridge.bridge.call_args[0][0]
+    assert bar["symbol"] == "600519.SH"
+    assert bar["freq"] == "tick"
+    assert bar["close"] == 10.0
+
+
+def test_poll_fallback_uses_market_data_when_full_tick_empty(monkeypatch):
+    """full tick 空时，用 get_market_data_ex 最近一根 bar 兜底。"""
+    raw_df = pd.DataFrame({
+        "time": [1710489600000],
+        "open": [9.8],
+        "high": [10.2],
+        "low": [9.7],
+        "close": [10.0],
+        "volume": [100000],
+        "amount": [1000000.0],
+    })
+    _install_fake_xtquant(monkeypatch, market_data_df=raw_df)
+    mock_bridge = MagicMock(spec=ThreadBridge)
+    gw = QmtGateway(
+        path="/tmp/qmt",
+        session_id=1,
+        bridge=mock_bridge,
+        poll_interval=0,
+        start_polling=False,
+    )
+    gw.subscribe(["600519.SH"], "tick", MagicMock())
+
+    gw.poll_once()
+
+    mock_bridge.bridge.assert_called_once()
+    bar = mock_bridge.bridge.call_args[0][0]
+    assert bar["symbol"] == "600519.SH"
+    assert bar["freq"] == "tick"
+    assert bar["close"] == 10.0
+
+
 # ---------------- 5. history 返回 DataFrame（带 available_at） ----------------
 
 def test_history_returns_dataframe(monkeypatch):
@@ -320,6 +397,37 @@ def test_history_returns_dataframe(monkeypatch):
     # xtdata.get_market_data_ex 被调用一次，period 正确
     assert len(state["history_calls"]) == 1
     assert state["history_calls"][0]["period"] == "1d"
+
+
+def test_history_accepts_real_xtdata_symbol_dict(monkeypatch, tmp_path):
+    """真实 xtdata.get_market_data_ex 常返回 {symbol: DataFrame}，应正常展开。"""
+    raw_df = pd.DataFrame({
+        "time": [1710316800],
+        "open": [9.0],
+        "high": [9.5],
+        "low": [8.8],
+        "close": [9.2],
+        "volume": [10000],
+    })
+    qmt_path = tmp_path / "userdata_mini"
+    (qmt_path / "datadir").mkdir(parents=True)
+    state = _install_fake_xtquant(
+        monkeypatch,
+        market_data_df={"600519.SH": raw_df},
+    )
+    bridge = ThreadBridge()
+    gw = QmtGateway(path=str(qmt_path), session_id=1, bridge=bridge)
+
+    df = gw.history(
+        "600519.SH",
+        "1d",
+        datetime(2024, 3, 13),
+        datetime(2024, 3, 15),
+    )
+
+    assert len(df) == 1
+    assert df.iloc[0]["symbol"] == "600519.SH"
+    assert state["history_calls"][0]["kwargs"]["data_dir"] == str(qmt_path / "datadir")
 
 
 # ---------------- 6. bar_at PIT 过滤 ----------------

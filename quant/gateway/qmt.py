@@ -5,6 +5,7 @@ xtquant 仅在 Windows + QMT 终端环境下可装；macOS/Linux 无该包。
 xtquant 内部线程回调经 ThreadBridge 桥接到 asyncio loop（§3.1 数据流）。
 """
 from datetime import datetime, timezone
+from pathlib import Path
 import threading
 from typing import Any, Iterable
 
@@ -57,7 +58,15 @@ class QmtGateway:
     通过 ThreadBridge.bridge 桥接到 asyncio loop 上的 on_bar。
     """
 
-    def __init__(self, path: str, session_id: int, bridge: ThreadBridge) -> None:
+    def __init__(
+        self,
+        path: str,
+        session_id: int,
+        bridge: ThreadBridge,
+        *,
+        poll_interval: float = 1.0,
+        start_polling: bool = True,
+    ) -> None:
         mods = _try_import_xtquant()
         if mods is None:
             raise RuntimeError(
@@ -66,6 +75,7 @@ class QmtGateway:
         self._xtdata, self._xttrader = mods
         self._bridge = bridge
         self._path = path
+        self._data_dir = _qmt_data_dir(path)
         self._session_id = session_id
         self._trader = self._xttrader.XtQuantTrader(path, session_id)
         self._trader.start()
@@ -73,7 +83,12 @@ class QmtGateway:
         # 已订阅 (symbol, freq) 集合，防重复订阅
         self._subscribed: set[tuple[str, str]] = set()
         self._run_thread: threading.Thread | None = None
+        self._poll_thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._subscription_ids: dict[tuple[str, str], int] = {}
+        self._poll_interval = poll_interval
+        self._start_polling = start_polling
+        self._last_polled_ts: dict[tuple[str, str], datetime] = {}
 
     # ---------------- 实时订阅 ----------------
 
@@ -104,6 +119,7 @@ class QmtGateway:
                 for s in pending:
                     self._subscription_ids[(s, freq)] = seq
                     self._subscribed.add((s, freq))
+                self._ensure_poll_loop()
             return
 
         for s in symbols:
@@ -114,6 +130,7 @@ class QmtGateway:
             )
             self._subscription_ids[(s, freq)] = seq
             self._subscribed.add((s, freq))
+        self._ensure_poll_loop()
 
     def _ensure_xtdata_run_loop(self) -> None:
         """Start xtdata.run() once so subscribe callbacks can be dispatched."""
@@ -136,6 +153,90 @@ class QmtGateway:
             daemon=True,
         )
         self._run_thread.start()
+
+    def _ensure_poll_loop(self) -> None:
+        """Start read-only polling fallback for terminals that do not push callbacks."""
+        if not self._start_polling or self._poll_thread is not None:
+            return
+        self._poll_thread = threading.Thread(
+            target=self._poll_loop,
+            name="qmt-poll-fallback",
+            daemon=True,
+        )
+        self._poll_thread.start()
+
+    def _poll_loop(self) -> None:
+        while not self._stop_event.is_set():
+            self.poll_once()
+            interval = self._poll_interval if self._poll_interval > 0 else 1.0
+            self._stop_event.wait(interval)
+
+    def poll_once(self) -> None:
+        """Poll subscribed symbols once and bridge fresh bars.
+
+        This is a fallback for QMT terminals where subscribe APIs register
+        successfully but no Python callback is pushed.
+        """
+        subscriptions = list(self._subscribed)
+        if not subscriptions:
+            return
+        tick_symbols = sorted({s for s, freq in subscriptions if freq == "tick"})
+        if tick_symbols:
+            for bar in self._poll_full_tick(tick_symbols):
+                self._bridge_polled_bar(bar)
+        for symbol, freq in subscriptions:
+            if freq != "tick":
+                for bar in self._poll_market_data(symbol, freq):
+                    self._bridge_polled_bar(bar)
+        missing_tick = [
+            s for s in tick_symbols
+            if (s, "tick") not in self._last_polled_ts
+        ]
+        for symbol in missing_tick:
+            for bar in self._poll_market_data(symbol, "tick"):
+                self._bridge_polled_bar(bar)
+
+    def _poll_full_tick(self, symbols: list[str]) -> Iterable[dict]:
+        get_full_tick = getattr(self._xtdata, "get_full_tick", None)
+        if not callable(get_full_tick):
+            return []
+        try:
+            data = get_full_tick(symbols) or {}
+        except Exception:
+            return []
+        return self._bars_from_xt_callback(data, symbols, "tick")
+
+    def _poll_market_data(self, symbol: str, freq: str) -> Iterable[dict]:
+        period = "1m" if freq == "tick" else _FREQ_TO_PERIOD.get(freq, freq)
+        try:
+            data = self._xtdata.get_market_data_ex(
+                field_list=["open", "high", "low", "close", "volume", "amount"],
+                stock_list=[symbol],
+                period=period,
+                count=1,
+                dividend_type="none",
+                fill_data=True,
+                data_dir=self._data_dir,
+            )
+        except Exception:
+            return []
+        df = _extract_symbol_frame(data, symbol)
+        if df is None or len(df) == 0:
+            return []
+        row = df.iloc[-1].to_dict()
+        row.setdefault("stock", symbol)
+        return self._bars_from_xt_callback(row, [symbol], freq)
+
+    def _bridge_polled_bar(self, bar: dict) -> None:
+        key = (str(bar["symbol"]), str(bar["freq"]))
+        ts = bar.get("ts")
+        if not isinstance(ts, datetime):
+            return
+        last_ts = self._last_polled_ts.get(key)
+        if last_ts is not None and ts <= last_ts:
+            return
+        self._last_polled_ts[key] = ts
+        self._bridge.bridge(bar)
 
     @classmethod
     def _bars_from_xt_callback(
@@ -238,7 +339,9 @@ class QmtGateway:
             period=period,
             start_time=start_str,
             end_time=end_str,
+            data_dir=self._data_dir,
         )
+        df = _extract_symbol_frame(df, symbol)
         if df is None or len(df) == 0:
             return pd.DataFrame()
         df = df.copy()
@@ -292,8 +395,26 @@ class QmtGateway:
             except (AttributeError, TypeError, ValueError):
                 pass
         self._subscription_ids.clear()
+        self._stop_event.set()
         try:
             self._trader.stop()  # type: ignore[attr-defined]
         except AttributeError:
             # fake/旧版 xttrader 无 stop，忽略
             pass
+
+
+def _extract_symbol_frame(data: object, symbol: str) -> pd.DataFrame | None:
+    if isinstance(data, pd.DataFrame):
+        return data
+    if isinstance(data, dict):
+        value = data.get(symbol)
+        if isinstance(value, pd.DataFrame):
+            return value
+    return None
+
+
+def _qmt_data_dir(path: str) -> str | None:
+    data_dir = Path(path) / "datadir"
+    if data_dir.exists():
+        return str(data_dir)
+    return None
