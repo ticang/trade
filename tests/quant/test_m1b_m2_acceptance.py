@@ -594,19 +594,20 @@ def test_m2_dedup_backpressure_in_pipeline() -> None:
 def test_m2_windows_only_note(monkeypatch) -> None:
     """§11 M2 验收 9：QmtGateway/QmtBroker 无 xtquant 时抛 RuntimeError('Windows-only')。
 
-    本机（macOS）xtquant 不可装，构造应即抛 RuntimeError，确认 live xtquant 须 Windows。
-    live 路径在 Windows + QMT 终端的真实验证须在该环境完成。
+    在已安装 xtquant 的 Windows 环境中，测试通过 patch lazy import helper
+    稳定覆盖缺包分支；live 路径仍须 QMT 终端服务在线后单独验证。
     """
-    # 清掉任何可能注入的 xtquant 模块，强制 lazy import 失败
-    for name in list(sys.modules):
-        if name == "xtquant" or name.startswith("xtquant."):
-            monkeypatch.setitem(sys.modules, name, None)
-
     bridge = ThreadBridge()
+    import quant.gateway.qmt as qmt_gateway_module
+
+    monkeypatch.setattr(qmt_gateway_module, "_try_import_xtquant", lambda: None)
     with pytest.raises(RuntimeError, match="Windows-only"):
         QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
 
+    import quant.execution.qmt_broker as qmt_broker_module
     from quant.execution.qmt_broker import QmtBroker
+
+    monkeypatch.setattr(qmt_broker_module, "_try_import_xtquant", lambda: None)
     with pytest.raises(RuntimeError, match="Windows-only"):
         QmtBroker(account_id="acct1", path="/tmp/qmt",
                   session_id=1, bridge=bridge)

@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { BacktestResult } from "@/types/research";
-import { mockBacktest } from "@/lib/mock/backtest";
+import { apiGet } from "@/lib/api/client";
 
 export function useBacktest() {
   return useQuery<BacktestResult>({
     queryKey: ["backtest"],
-    queryFn: () => mockBacktest(),
+    queryFn: () => apiGet<BacktestResult>("/api/backtest"),
     staleTime: Infinity,
   });
 }

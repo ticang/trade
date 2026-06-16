@@ -88,14 +88,12 @@ def _make_buy_order(symbol="600519", qty=100, price=10.0) -> Order:
 
 def test_qmt_broker_unavailable_raises(monkeypatch):
     """_try_import_xtquant 返回 None → 构造抛 RuntimeError。"""
-    for name in list(sys.modules):
-        if name == "xtquant" or name.startswith("xtquant."):
-            monkeypatch.setitem(sys.modules, name, None)
-
     bridge = ThreadBridge()
     with pytest.raises(RuntimeError, match="xtquant unavailable"):
-        # noqa: 下行触发 import（先写测试 → 实现前会 ImportError）
+        import quant.execution.qmt_broker as qmt_broker_module
         from quant.execution.qmt_broker import QmtBroker
+
+        monkeypatch.setattr(qmt_broker_module, "_try_import_xtquant", lambda: None)
         QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=bridge)
 
 
@@ -119,6 +117,52 @@ def test_construct_per_account(monkeypatch):
     trader.get_stock_account.assert_called_once_with("acct1")
     assert broker.account_id == "acct1"
     assert broker.is_synchronous is False
+
+
+def test_construct_per_account_with_real_xttype_stock_account(monkeypatch):
+    """真实 xtquant 无 get_stock_account → 用 xttype.StockAccount 构造账户对象。"""
+    state: dict = {"trader_instances": [], "accounts": []}
+    xtdata = types.ModuleType("xtquant.xtdata")
+    xttrader = types.ModuleType("xtquant.xttrader")
+    xttype = types.ModuleType("xtquant.xttype")
+
+    class _FakeStockAccount:
+        def __init__(self, account_id, account_type="STOCK"):
+            self.account_id = account_id
+            self.account_type = account_type
+            state["accounts"].append(self)
+
+    class _FakeXtQuantTrader:
+        def __init__(self, path, session_id):
+            self.path = path
+            self.session_id = session_id
+            self.start = MagicMock(return_value=0)
+            self.connect = MagicMock(return_value=0)
+            self.query_stock_order = MagicMock(return_value={"order_status": 56})
+            self.order_stock = MagicMock(return_value=100)
+            self.cancel_order_stock = MagicMock(return_value=0)
+            self.query_stock_positions = MagicMock(return_value=[])
+            self.query_stock_asset = MagicMock(return_value={})
+            state["trader_instances"].append(self)
+
+    xttrader.XtQuantTrader = _FakeXtQuantTrader  # type: ignore[attr-defined]
+    xttype.StockAccount = _FakeStockAccount  # type: ignore[attr-defined]
+    xtquant_pkg = types.ModuleType("xtquant")
+    xtquant_pkg.xtdata = xtdata  # type: ignore[attr-defined]
+    xtquant_pkg.xttrader = xttrader  # type: ignore[attr-defined]
+    xtquant_pkg.xttype = xttype  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "xtquant", xtquant_pkg)
+    monkeypatch.setitem(sys.modules, "xtquant.xtdata", xtdata)
+    monkeypatch.setitem(sys.modules, "xtquant.xttrader", xttrader)
+    monkeypatch.setitem(sys.modules, "xtquant.xttype", xttype)
+
+    from quant.execution.qmt_broker import QmtBroker
+
+    broker = QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=42, bridge=ThreadBridge())
+
+    assert broker.account_id == "acct1"
+    assert len(state["accounts"]) == 1
+    assert state["accounts"][0].account_id == "acct1"
 
 
 # ---------------- 3. place 调 order_stock ----------------
@@ -208,6 +252,49 @@ def test_status_mapping(monkeypatch, xt_status, expected):
     trader.query_order.return_value = {"order_status": xt_status}
 
     assert broker.status("order_42") == expected
+
+
+def test_status_uses_query_stock_order_when_query_order_is_absent(monkeypatch):
+    """真实 xtquant 方法名为 query_stock_order。"""
+    state: dict = {"trader_instances": [], "accounts": []}
+    xtdata = types.ModuleType("xtquant.xtdata")
+    xttrader = types.ModuleType("xtquant.xttrader")
+    xttype = types.ModuleType("xtquant.xttype")
+
+    class _FakeStockAccount:
+        def __init__(self, account_id, account_type="STOCK"):
+            self.account_id = account_id
+            self.account_type = account_type
+            state["accounts"].append(self)
+
+    class _FakeXtQuantTrader:
+        def __init__(self, path, session_id):
+            self.start = MagicMock(return_value=0)
+            self.connect = MagicMock(return_value=0)
+            self.query_stock_order = MagicMock(return_value={"order_status": 55})
+            self.order_stock = MagicMock(return_value=100)
+            self.cancel_order_stock = MagicMock(return_value=0)
+            self.query_stock_positions = MagicMock(return_value=[])
+            self.query_stock_asset = MagicMock(return_value={})
+            state["trader_instances"].append(self)
+
+    xttrader.XtQuantTrader = _FakeXtQuantTrader  # type: ignore[attr-defined]
+    xttype.StockAccount = _FakeStockAccount  # type: ignore[attr-defined]
+    xtquant_pkg = types.ModuleType("xtquant")
+    xtquant_pkg.xtdata = xtdata  # type: ignore[attr-defined]
+    xtquant_pkg.xttrader = xttrader  # type: ignore[attr-defined]
+    xtquant_pkg.xttype = xttype  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "xtquant", xtquant_pkg)
+    monkeypatch.setitem(sys.modules, "xtquant.xtdata", xtdata)
+    monkeypatch.setitem(sys.modules, "xtquant.xttrader", xttrader)
+    monkeypatch.setitem(sys.modules, "xtquant.xttype", xttype)
+
+    from quant.execution.qmt_broker import QmtBroker
+
+    broker = QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
+
+    assert broker.status("order_42") == OrderStatus.FILLED
+    state["trader_instances"][0].query_stock_order.assert_called_once()
 
 
 # ---------------- 7. positions / account 查询 ----------------

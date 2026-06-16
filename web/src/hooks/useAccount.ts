@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { AccountSnapshot } from "@/types/trade";
-import { mockAccount } from "@/lib/mock/account";
+import { apiGet } from "@/lib/api/client";
 
 export function useAccount() {
   return useQuery<AccountSnapshot[]>({
     queryKey: ["account"],
-    queryFn: () => mockAccount(),
+    queryFn: () => apiGet<AccountSnapshot[]>("/api/account"),
     staleTime: Infinity,
   });
 }

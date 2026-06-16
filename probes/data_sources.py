@@ -1,19 +1,34 @@
 """Probe free data sources (AkShare/BaoStock) for required fields and PIT derivability."""
 from datetime import date, datetime
+import time
 
 import pandas as pd
 
 
-def fetch_akshare_daily(symbol: str, start: date, end: date) -> pd.DataFrame:
+def fetch_akshare_daily(
+    symbol: str, start: date, end: date, *, retries: int = 3
+) -> pd.DataFrame:
     import akshare as ak
 
-    df = ak.stock_zh_a_hist(
-        symbol=symbol,
-        period="daily",
-        start_date=start.strftime("%Y%m%d"),
-        end_date=end.strftime("%Y%m%d"),
-        adjust="",
-    )
+    last_exc: Exception | None = None
+    for attempt in range(max(1, retries)):
+        try:
+            df = ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start.strftime("%Y%m%d"),
+                end_date=end.strftime("%Y%m%d"),
+                adjust="",
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt == max(1, retries) - 1:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+    else:  # pragma: no cover - loop always breaks or raises
+        raise RuntimeError("akshare retry loop exited unexpectedly") from last_exc
+
     df = df.rename(
         columns={
             "日期": "trade_date",

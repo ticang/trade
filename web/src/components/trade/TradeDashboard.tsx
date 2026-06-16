@@ -9,6 +9,7 @@ import { usePositions } from "@/hooks/usePositions";
 import { useOrders } from "@/hooks/useOrders";
 import { useFills } from "@/hooks/useFills";
 import type { Order, OrderSide } from "@/types/trade";
+import { QueryState } from "@/components/ui/QueryState";
 
 const SYMBOL = "000001";
 
@@ -51,11 +52,18 @@ export function TradeDashboard() {
         </div>
       )}
 
+      <QueryState label="持仓" isLoading={positions.isLoading} isError={positions.isError} isEmpty={!positions.isLoading && !positions.isError && (positions.data?.length ?? 0) === 0} error={positions.error} />
       <PositionsTable rows={positions.data ?? []} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-lg">
-        <OrdersList orders={[...localOrders, ...(orders.data ?? [])]} />
-        <FillsList fills={fills.data ?? []} />
+        <div className="space-y-sm">
+          <QueryState label="委托" isLoading={orders.isLoading} isError={orders.isError} isEmpty={!orders.isLoading && !orders.isError && localOrders.length === 0 && (orders.data?.length ?? 0) === 0} error={orders.error} />
+          <OrdersList orders={[...localOrders, ...(orders.data ?? [])]} />
+        </div>
+        <div className="space-y-sm">
+          <QueryState label="成交" isLoading={fills.isLoading} isError={fills.isError} isEmpty={!fills.isLoading && !fills.isError && (fills.data?.length ?? 0) === 0} error={fills.error} />
+          <FillsList fills={fills.data ?? []} />
+        </div>
       </div>
     </div>
   );

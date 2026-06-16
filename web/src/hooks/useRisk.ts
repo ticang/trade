@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { RiskState } from "@/types/monitor";
-import { mockRisk } from "@/lib/mock/risk";
+import { apiGet } from "@/lib/api/client";
 
 export function useRisk() {
   return useQuery<RiskState>({
     queryKey: ["risk"],
-    queryFn: () => mockRisk(),
+    queryFn: () => apiGet<RiskState>("/api/risk"),
     staleTime: Infinity,
   });
 }

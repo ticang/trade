@@ -1,7 +1,7 @@
 # 交接文档：A 股量化自动交易系统
 
-> 更新：2026-06-14
-> 状态：设计 v0.5 完成 + M-1a 后端探测 GO + UI Phase 1-4 全部完成并已 fast-forward 并入 main（dc563d9）。剩余 M0+。
+> 更新：2026-06-15
+> 状态：设计 v0.5 完成 + M0/M0.5/M1/M1.5/M2/M3/M5/M6 多数后端能力就位 + 前后端只读 API bridge 完成。剩余重点：连续模拟盘/实盘灰度门禁、规则三方校对、稳定外部数据源复验、真实研究样本复验。
 
 ---
 
@@ -16,9 +16,9 @@
 
 ## 2. 分支结构
 
-- **`main`**：UI Phase 1-4 + 早期 probes（duckdb_perf/sqlite_write）已 fast-forward 并入（dc563d9），领先 origin/main 28 提交未 push。
+- **`main`**：UI Phase 1-4 + 早期 probes（duckdb_perf/sqlite_write）已 fast-forward 并入（dc563d9），后续本地又推进了后端能力、只读 API bridge、QMT 只读探测与 P1 本机项；当前工作区有未提交改动，先看 `git status`。
 - **`feat/ui-phase1`**：已并入 main（与 main 同点 dc563d9），可安全删除。
-- **`feat/m1a-local-probes`**：M-1a 完整探测（DSL/calendar/nlp/data_sources/report）+ m1a-report + tasks/todo.md。**M0 在此或新分支继续**。
+- **`feat/m1a-local-probes`**：M-1a 完整探测（DSL/calendar/nlp/data_sources/report）+ m1a-report + tasks/todo.md。历史起点保留；当前执行口径以 `tasks/todo.md` 的“当前缺口总览”为准。
 
 切换分支注意：`web/next-env.d.ts` 是 Next 自动生成，切分支前若有本地修改用 `git checkout -- web/next-env.d.ts` 丢弃。
 
@@ -80,9 +80,12 @@
 
 ## 6. 环境注意
 
+- **只读 API bridge**：后端 `uvicorn quant.api.app:app --reload --port 8000`；前端 `NEXT_PUBLIC_TRADE_API_BASE_URL=http://localhost:8000 npm run dev`。当前仅 GET 只读接口，不接真实下单 POST。
+- **QMT 只读 live probe**：安装可选依赖 `pip install -e ".[qmt]" --index-url https://pypi.org/simple` 后运行 `.venv\Scripts\python.exe -m probes.qmt_live`。该探测不会下单；需要先打开并登录 QMT 投研版/极简版，并配置 `QMT_USERDATA_PATH` 才能完成 trader 只读握手。
+- **AkShare/Eastmoney 网络探测**：如本机系统代理导致 `push2his.eastmoney.com` 断连，可在 PowerShell 临时设置 `$env:NO_PROXY='*'; $env:no_proxy='*'` 后重跑 `tests\probes\test_data_sources.py -m network`。当前仍需稳定中国网络复验，不要把单次通过等同于生产可用。
 - **pip 镜像坏**（清华 SSL）→ `pip install --index-url https://pypi.org/simple`
 - **npm registry**：用 `--registry https://registry.npmjs.org`（全局 .npmrc 可能指向 npmmirror，audit 不工作）
-- **Python**：`.venv`（3.14.4），后端用 `.venv/bin/pytest`
+- **Python**：`.venv`（3.11.5），Windows 后端用 `.venv\Scripts\python.exe -m pytest`
 - **Node**：v24，前端在 `web/`，`npx next build` / `npx vitest run`
 - **目录**：`web/`（前端）、`probes/`（M-1a 探测）、`docs/`（设计+报告）、`tasks/`（跟踪）
 
@@ -104,6 +107,6 @@
 
 - 前端：Next.js 14 + TS + Tailwind + TanStack Query + lightweight-charts + recharts
 - 后端：Python 3.11+ + SQLite(事务) + DuckDB(分析) + asyncio + DeepSeek API + DSL 手写解释器沙箱
-- 交易通道：QMT/MiniQMT（M-1b 待验证，本地 M-1a 已 GO）
+- 交易通道：QMT/MiniQMT（只读行情/trader 握手已在 Windows + QMT 登录态通过；下单/撤单/断线恢复/连续模拟盘仍待 M2/M4 门禁验证）
 - UI 风格：DESIGN.md 币安风格（深黑底 + 币安黄 + 涨绿跌红）
 - 数据：一期全免费源（AkShare + BaoStock + exchange_calendars + Chinese-FinBERT + DeepSeek）

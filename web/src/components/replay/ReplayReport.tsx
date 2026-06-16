@@ -5,6 +5,7 @@ import { SentimentChart } from "@/components/charts/SentimentChart";
 import { useKline } from "@/hooks/useKline";
 import { useSentiment } from "@/hooks/useSentiment";
 import { mockSignals } from "@/lib/mock/signals";
+import { QueryState } from "@/components/ui/QueryState";
 
 export function ReplayReport({ symbol }: { symbol: string }) {
   const kline = useKline(symbol);
@@ -23,6 +24,7 @@ export function ReplayReport({ symbol }: { symbol: string }) {
       <Card variant="surface-dark">
         <div className="p-lg">
           <div className="text-caption text-muted mb-sm">价格走势 + 成交量 + 信号标注</div>
+          <QueryState label="K 线" isLoading={kline.isLoading} isError={kline.isError} isEmpty={!kline.isLoading && !kline.isError && (kline.data?.length ?? 0) === 0} error={kline.error} />
           {kline.data && <KlineChart bars={kline.data} signals={signals} />}
         </div>
       </Card>
@@ -30,6 +32,7 @@ export function ReplayReport({ symbol }: { symbol: string }) {
       <Card variant="surface-dark">
         <div className="p-lg">
           <div className="text-caption text-muted mb-sm">散户情绪曲线</div>
+          <QueryState label="情绪" isLoading={sentiment.isLoading} isError={sentiment.isError} isEmpty={!sentiment.isLoading && !sentiment.isError && (sentiment.data?.length ?? 0) === 0} error={sentiment.error} />
           {sentiment.data && <SentimentChart points={sentiment.data} />}
         </div>
       </Card>

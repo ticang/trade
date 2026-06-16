@@ -16,15 +16,19 @@ dependencies = [
     "cvxpy>=1.4",
     "openai>=1.0",
     "arch>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]
 nlp = ["torch>=2.2", "transformers>=4.40"]
+qmt = ["xtquant>=250516.1.1"]
 
 [tool.setuptools.packages.find]
-include = ["quant*"]
+include = ["quant*", "probes*"]
 
 [tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 markers = [
     "slow: marks probes as slow (deselect with '-m \"not slow\"')",

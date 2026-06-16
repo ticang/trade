@@ -8,6 +8,7 @@ import { StrategyLifecycleTable } from "@/components/research/StrategyLifecycleT
 import { useFactorEval } from "@/hooks/useFactorEval";
 import { useBacktest } from "@/hooks/useBacktest";
 import { useStrategyLifecycle } from "@/hooks/useStrategyLifecycle";
+import { QueryState } from "@/components/ui/QueryState";
 
 export function ResearchDashboard() {
   const factors = useFactorEval();
@@ -21,6 +22,8 @@ export function ResearchDashboard() {
   return (
     <div className="space-y-lg">
       <h1 className="text-title-lg text-on-dark">研究回测</h1>
+
+      <QueryState label="因子评价" isLoading={factors.isLoading} isError={factors.isError} isEmpty={!factors.isLoading && !factors.isError && factorList.length === 0} error={factors.error} />
 
       {/* Factor selector tabs */}
       <div className="flex flex-wrap gap-xs" role="tablist">
@@ -45,8 +48,10 @@ export function ResearchDashboard() {
 
       {active && <FactorEvalChart factor={active} />}
 
+      <QueryState label="回测" isLoading={backtest.isLoading} isError={backtest.isError} isEmpty={!backtest.isLoading && !backtest.isError && !backtest.data} error={backtest.error} />
       {backtest.data && <BacktestResultPanel result={backtest.data} />}
 
+      <QueryState label="策略生命周期" isLoading={lifecycle.isLoading} isError={lifecycle.isError} isEmpty={!lifecycle.isLoading && !lifecycle.isError && (lifecycle.data?.length ?? 0) === 0} error={lifecycle.error} />
       <StrategyLifecycleTable rows={lifecycle.data ?? []} />
     </div>
   );

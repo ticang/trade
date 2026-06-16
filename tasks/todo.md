@@ -367,21 +367,21 @@
 截至当前检查，项目不是“没进度”，而是处在 **后端领域能力与前端页面各自成形、真实产品闭环尚未完成** 的阶段：
 - 后端：`quant/` 已有 M0/M0.5/M1/M1.5/M2/M3/M5/M6 相关模块与非 network 测试覆盖，当前交易范围已收敛为沪深主板股票。
 - 前端：`web/` 已有 `/monitor`、`/replay`、`/research`、`/trade` 页面与 DESIGN.md 风格系统。
-- 断点：前端仍走 `web/src/lib/mock/*`，后端未提供前端可消费的 HTTP API；QMT live、实盘灰度、合规社媒源、外部数据源复验仍未完成。
+- 当前断点：只读 API bridge 已打通，前端核心 hooks 默认走后端 API；仍未完成连续模拟盘/实盘灰度、规则三方校对、稳定 AkShare 中国网络复验、合规社媒源与真实研究样本复验。
 
 ### P0：产品闭环必须补齐
-- [ ] **前后端 API 对接**：前端 hooks 从 mock 切到统一 API client；后端新增 HTTP API 层。详见下一节“前后端 API 对接计划”。
-- [ ] **只读数据闭环**：先打通行情/K 线、账户、持仓、委托、成交、风险、告警、因子评价、回测结果；不要先接真实下单。
-- [ ] **页面状态闭环**：四个页面补齐 loading/error/empty，避免后端无数据时 UI 假装正常。
-- [ ] **端到端启动方式**：补后端 API 启动命令、前端环境变量、联调说明，写入 `tasks/HANDOFF.md` 或专门运行文档。
-- [ ] **统一验收**：后端非 network 测试、前端单测、前端 build、四页面本地联调截图/记录均通过后，才可把“前后端已对接”标为完成。
+- [x] **前后端 API 对接**：前端 hooks 从 mock 切到统一 API client；后端新增 HTTP API 层。详见下一节“前后端 API 对接计划”。
+- [x] **只读数据闭环**：先打通行情/K 线、账户、持仓、委托、成交、风险、告警、因子评价、回测结果；不要先接真实下单。
+- [x] **页面状态闭环**：四个页面补齐 loading/error/empty，避免后端无数据时 UI 假装正常。
+- [x] **端到端启动方式**：补后端 API 启动命令、前端环境变量、联调说明，写入 `tasks/HANDOFF.md` 或专门运行文档。
+- [x] **统一验收**：后端非 network 测试、前端单测、前端 build、四页面本地联调截图/记录均通过后，才可把“前后端已对接”标为完成。
 
 ### P1：进入模拟盘/准实盘前必须补齐
-- [ ] **QMT/MiniQMT live 验证**：当前 macOS 只能做 lazy import + mock 测；真实订阅频率、回调线程、下单延迟、断线恢复需 Windows + QMT 登录态验证。
+- [ ] **QMT/MiniQMT live 验证**：Windows + QMT 登录态下只读行情/trader 握手已通过；真实订阅频率、回调线程、下单延迟、撤单、断线恢复仍需模拟盘阶段验证。
 - [ ] **连续 20 交易日模拟盘验收**：MarketDataGateway → FactorRegistry → StrategyRunner → Broker → on_fill → 持仓/对账闭环，对账差异 < 0.1%，多账户隔离正确。
 - [ ] **AkShare 中国网络复验**：M-1a 中 eastmoney 出口不可达，需在中国网络环境确认字段完整性与可用性。
-- [ ] **DuckDB 全市场规模实测**：用当前沪深主板范围做 5300 票级别或当前 universe 规模实测，补延迟/写入报告。
-- [ ] **交易日历调休维护**：`MAKEUP_TRADING_DAYS` 需要按交易所年度公告补录 2025+，并记录来源。
+- [x] **DuckDB 全市场规模实测**：用当前沪深主板范围做 5300 票级别或当前 universe 规模实测，补延迟/写入报告。
+- [x] **交易日历调休维护**：`MAKEUP_TRADING_DAYS` 需要按交易所年度公告补录 2025+，并记录来源。
 - [ ] **规则来源三方校对**：主板规则、费用、过户费等 `provisional` 项升级为 verified；provisional 继续阻断实盘新开仓。
 
 ### P2：M4 实盘灰度必须单独补齐
@@ -415,55 +415,95 @@
 5. 真实历史数据复验 M3/M5a/M5b/M6：把研究能力从 mock/合成推到真实样本。
 
 ### Review
-（待各缺口关闭时逐项补结果、验证命令和剩余风险）
+**P0 结果（2026-06-15）**：
+- 前后端 API bridge、只读数据闭环、页面 loading/error/empty 状态、启动方式与本地验收已完成，详情见下方“前后端 API 对接计划 / Review”。
+
+**QMT Windows 探测（2026-06-15）**：
+- 已在 Windows `.venv` 安装并声明可选依赖 `xtquant>=250516.1.1`，`xtquant`、`xtdata`、`xttrader` import 均通过。
+- 新增只读探测入口 `python -m probes.qmt_live` 和测试 `tests/probes/test_qmt_live.py`；探测只读行情和只读 trader 握手，不调用下单/撤单 API，不输出密码/token。
+- 当前真实只读 live 探测状态为 pass：QMT 客户端在线后，`xtquant_import`、`market_data_read`、`trader_readonly_handshake` 均 PASS。
+- 修正真实 xtquant API 适配：`QmtBroker` 不再依赖不存在的 `get_stock_account`，真实环境用 `xttype.StockAccount`；状态查询兼容真实 `query_stock_order`。
+- 验证：QMT 相关组合测试 39 passed；真实只读 broker 构造/账户查询/持仓查询 smoke PASS（不下单，不输出敏感值）；后端非 network 全量 647 passed, 4 deselected, 21 warnings；probes 非 network 13 passed, 3 deselected, 1 xfailed。
+- 门禁：真实下单延迟、撤单、断线恢复、连续 20 交易日模拟盘仍未验证；这些不能由只读 probe 替代，后续进入模拟盘计划时单独做。
+- 已安装 `.[nlp,qmt]`；Chinese-FinBERT 探测 `tests/probes/test_nlp_sentiment.py -m "slow and network"` 通过（1 passed）。
+- 新增 AkShare transient retry：`tests/probes/test_data_sources.py::test_akshare_daily_retries_transient_disconnect` 先红后绿，用于覆盖 Eastmoney 临时断连后重试成功的路径。
+
+**P1 可本机关闭项（2026-06-15）**：
+- DuckDB 全市场规模实测通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_duckdb_perf_scale.py -q -s` → 1 passed；5300×250×10 截面查询 12.6ms，预算 50ms。该 slow 性能测试需单独跑；与前端测试并行时出现过一次 76.4ms 的资源争用失败，不作为性能基准。
+- 交易日历 overlay 通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_calendar.py tests\probes\test_calendar_holidays.py -q` → 9 passed, 1 xfailed；生产 `TradingCalendar` 已覆盖 2024 补班日，历史 probe 的 xfail 保留 M-1a 原始发现。
+- 规则门禁复验通过：`.venv\Scripts\python.exe -m pytest tests\quant\test_rule_loader.py tests\quant\test_rule_integration.py tests\quant\test_rules_with_instrument.py tests\quant\test_instrument_acceptance.py -q` → 20 passed；当前结构规则 verified，费用 provisional 仍阻断实盘 `require_verified=True`，因此“三方校对”不能标完成。
+- AkShare 复验仍未关闭：BaoStock/PIT 通过，AkShare/Eastmoney 单测曾在 `NO_PROXY=*` 下单次通过，但连续跑仍出现 `RemoteDisconnected`；已给 `fetch_akshare_daily` 加 transient retry 单测和实现，真实网络项仍需稳定中国网络/关闭冲突代理后复验。
+- 收尾验证：后端非 network 全量 647 passed, 4 deselected, 21 warnings；probes 非 network 14 passed, 3 deselected, 1 xfailed；QMT 相关组合 39 passed；前端 `npm test -- --run` 77 passed；前端 `npm run build` passed。
 
 ---
 
-## 前后端 API 对接计划（待执行）
+## 前后端 API 对接计划（已完成）
 
 ### 当前结论
-前后端尚未真实对接完成。前端 `/monitor`、`/replay`、`/research`、`/trade` 页面已存在并能通过测试/构建，但数据仍来自 `web/src/lib/mock/*` 与各 `use*` hooks 的 mock queryFn；后端已有 Python 领域模块和测试覆盖，但当前未提供 FastAPI/Flask 等前端可消费的 HTTP API 层。
+前后端只读 API bridge 已完成。前端 `/monitor`、`/replay`、`/research`、`/trade` 核心数据已从 mock queryFn 切到统一 API client；后端提供 FastAPI 只读接口供页面消费。mock 数据仍保留为测试 fixture，不作为默认生产路径。
 
 ### 成功标准
-- [ ] 前端核心只读数据不再依赖 mock：行情/K 线、账户、持仓、委托、成交、风险、告警、因子评价、回测结果均通过统一 API client 获取。
-- [ ] 后端提供面向前端的 HTTP API，返回结构与 `web/src/types/*` 对齐。
-- [ ] `/monitor`、`/replay`、`/research`、`/trade` 在本地 API 启动后能展示真实后端返回数据。
-- [ ] 保留 mock 作为测试 fixture 或 dev fallback，但生产路径不默认走 mock。
-- [ ] 后端 `pytest tests/quant -m "not network" -q`、前端 `npm test -- --run`、`npm run build` 全部通过。
+- [x] 前端核心只读数据不再依赖 mock：行情/K 线、账户、持仓、委托、成交、风险、告警、因子评价、回测结果均通过统一 API client 获取。
+- [x] 后端提供面向前端的 HTTP API，返回结构与 `web/src/types/*` 对齐。
+- [x] `/monitor`、`/replay`、`/research`、`/trade` 在本地 API 启动后能展示真实后端返回数据。
+- [x] 保留 mock 作为测试 fixture 或 dev fallback，但生产路径不默认走 mock。
+- [x] 后端 `pytest tests/quant -m "not network" -q`、前端 `npm test -- --run`、`npm run build` 全部通过。
 
 ### 任务清单
-- [ ] **Task 1: 定义前后端契约**
+- [x] **Task 1: 定义前后端契约**
   - 文件：`web/src/types/*`、新增/更新后端 API schema 文件。
   - 内容：冻结只读接口响应字段，优先覆盖 monitor/replay/research/trade 页面已使用字段。
   - 验证：TypeScript 类型与后端 schema 字段命名一致，无多余 mock-only 字段混入生产契约。
 
-- [ ] **Task 2: 新增后端 HTTP API 层**
+- [x] **Task 2: 新增后端 HTTP API 层**
   - 文件：新增后端 app/router/service 入口，复用现有 quant 模块，不重写领域逻辑。
   - 内容：实现只读接口：markets/kline/account/positions/orders/fills/risk/alerts/factor-eval/backtest/strategy-lifecycle。
   - 验证：新增 API 测试覆盖 200 响应、字段结构、主板范围约束。
 
-- [ ] **Task 3: 新增前端 API client**
+- [x] **Task 3: 新增前端 API client**
   - 文件：`web/src/lib/api/*`。
   - 内容：统一 base URL、fetch 包装、错误对象、请求超时；不要在组件里散落 `fetch`。
-  - 验证：client 单测覆盖成功响应、HTTP 错误、网络错误。
+  - 验证：client 单测覆盖成功响应、HTTP 错误、网络错误、请求超时 abort。
 
-- [ ] **Task 4: 替换 hooks 的 mock queryFn**
+- [x] **Task 4: 替换 hooks 的 mock queryFn**
   - 文件：`web/src/hooks/use*.ts`。
   - 内容：将 `mock*()` 替换为 API client 调用；mock 数据仅保留给测试或显式 dev fallback。
   - 验证：hooks 测试用 mock server/API stub，不再直接断言 `web/src/lib/mock/*`。
 
-- [ ] **Task 5: 页面联调与状态补齐**
+- [x] **Task 5: 页面联调与状态补齐**
   - 文件：`web/src/app/{monitor,replay,research,trade}/page.tsx` 与相关 components。
   - 内容：检查 loading/error/empty 状态；交易页下单仍保持模拟提示，真实 POST 另立计划。
   - 验证：本地同时启动后端 API + 前端，四个页面可展示后端返回数据。
 
-- [ ] **Task 6: 验收与记录**
+- [x] **Task 6: 验收与记录**
   - 后端验证：`.venv/bin/pytest tests/quant -m "not network" -q`。
   - 前端验证：在 `web/` 执行 `npm test -- --run` 与 `npm run build`。
   - 文档：在本节 `Review` 补充实际接口清单、验证输出、剩余风险。
 
 ### Review
-（待执行后填写）
+**阶段结果（2026-06-15）**：
+- 后端新增 `quant.api` FastAPI 只读层，覆盖 `/api/markets`、`/api/kline/{symbol}`、`/api/sentiment/{symbol}`、`/api/account`、`/api/positions`、`/api/orders`、`/api/fills`、`/api/risk`、`/api/alerts`、`/api/strategies`、`/api/factor-eval`、`/api/backtest`、`/api/strategy-lifecycle`。
+- 当前 API 默认只返回沪深主板样例数据；`688981` 等当前范围外 symbol 返回 404，避免 UI 默认路径误展示延期品种。
+- 前端新增统一 `apiGet` client，13 个 hooks 已从 `web/src/lib/mock/*` 切到只读 API endpoint；`apiGet` 覆盖 base URL、HTTP 错误、网络错误和默认 10 秒超时；mock 数据仍保留为测试/fixture 资产。
+- 四个页面关键数据区接入 `QueryState`，补 loading/error/empty 状态；交易页下单仍为本地模拟，不接真实 POST。
+- 运行说明：后端 `uvicorn quant.api.app:app --reload --port 8000`；前端在 `web/` 用 `NEXT_PUBLIC_TRADE_API_BASE_URL=http://localhost:8000 npm run dev`。
+
+**验证**：
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_api_readonly.py -q` → 2 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` → 647 passed, 4 deselected, 21 warnings。
+- `.venv\Scripts\python.exe -m pytest tests\probes -m "not network" -q` → 14 passed, 3 deselected, 1 xfailed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_execution_qmt_broker.py tests\quant\test_gateway_qmt.py tests\quant\test_m1b_m2_acceptance.py tests\probes\test_qmt_live.py -q` → 39 passed。
+- `web/ npm test -- --run` → 77 passed。
+- `web/ npm run build` → passed。
+- 本地烟雾：启动 `uvicorn` + `next dev` 后用浏览器检查 `/monitor`、`/trade`、`/research`、`/replay`，四页均无“加载失败”；前三页展示 API 数据，复盘页 K 线/情绪正常渲染。截图已归档到 `docs/review/api-bridge-screenshots-2026-06-16/`，记录见 `docs/review/2026-06-16-api-bridge-browser-smoke.md`。
+
+**环境修复**：
+- 已用 Python 3.11.5 创建 `.venv` 并 `pip install -e . --index-url https://pypi.org/simple` 安装后端依赖。
+- `pyproject.toml` 固化 pytest `--import-mode=importlib`，避免 `tests/quant` 在 Windows/pytest 9 下遮蔽源码包 `quant`。
+- 修正 `test_llm_client.py` 一处 monkeypatch 字符串路径，改为模块对象 patch，兼容 importlib 收集模式。
+
+**剩余提醒**：
+- 已补截图文件归档；开发模式控制台存在 Recharts `defaultProps` warning，非 API bridge 阻断项。
 
 ---
 
@@ -485,4 +525,4 @@
 
 ### 遗留提醒
 - 官方交易规则来源仍需 M0.5/M-1b 做人工快照与 verified 升级；本次未重新核验外部规则原文。
-- M2.5 API bridge 仍待实现；当前前端 hooks 仍是 mock。
+- M2.5 API bridge 已实现；真实下单 POST 仍按 M4 门禁延后。

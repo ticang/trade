@@ -4,6 +4,7 @@
 """
 import pytest
 
+import quant.llm.client as llm_client
 from quant.llm.client import LLMClient
 from quant.llm import prompt
 
@@ -117,7 +118,7 @@ def test_missing_credentials_raises(monkeypatch):
     """清空 env 且无 .env 可读时，构造客户端报 RuntimeError。"""
     for k in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setattr("quant.llm.client._ENV_LOADED", True)
+    monkeypatch.setattr(llm_client, "_ENV_LOADED", True)
     with pytest.raises(RuntimeError):
         LLMClient()
 

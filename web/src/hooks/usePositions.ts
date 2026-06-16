@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Position } from "@/types/monitor";
-import { mockPositions } from "@/lib/mock/positions";
+import { apiGet } from "@/lib/api/client";
 
 export function usePositions() {
   return useQuery<Position[]>({
     queryKey: ["positions"],
-    queryFn: () => mockPositions(),
+    queryFn: () => apiGet<Position[]>("/api/positions"),
     staleTime: Infinity,
   });
 }

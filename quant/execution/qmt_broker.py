@@ -2,7 +2,7 @@
 
 xtquant 仅 Windows + QMT 终端可装，macOS/Linux 缺失。本模块顶层禁止 import xtquant
 —— 构造时 lazy import，失败抛 RuntimeError。per-account：每个 QmtBroker 实例绑定
-单一 account_id，trader/get_stock_account 一次构造，client_order_id 去重隔离于
+单一 account_id，trader 账户对象一次构造，client_order_id 去重隔离于
 该实例内。is_synchronous=False：成交回报在 xtquant 内部线程触发，经 ThreadBridge
 桥接到 asyncio loop 上的 on_fill，策略层只接 on_fill 不在回调内查 status。
 """
@@ -55,7 +55,7 @@ def _side_to_xt(side: str) -> int:
 class QmtBroker:
     """Broker 的 QMT 实现。
 
-    per-account：构造时绑定单一 account_id，get_stock_account 一次。
+    per-account：构造时绑定单一 account_id，账户对象一次构造。
     xtquant lazy import；macOS/无 xtquant → 构造抛 RuntimeError。
     is_synchronous=False：成交回报在 xtquant 内部线程触发，经 bridge → on_fill 异步。
     """
@@ -80,7 +80,7 @@ class QmtBroker:
         self._trader = self._xttrader.XtQuantTrader(path, session_id)
         self._trader.start()
         self._trader.connect()
-        self._account = self._trader.get_stock_account(account_id)
+        self._account = _make_stock_account(self._trader, account_id)
         # per-instance client_order_id 去重集（§4.6.2 断线重连防重复）
         self._client_ids: set[str] = set()
         # on_fill 异步回调（经 bridge 从内部线程桥接）
@@ -150,7 +150,10 @@ class QmtBroker:
 
     def status(self, order_id: str) -> OrderStatus:
         """查询订单状态：xttrader.query_order → 映射 OrderStatus。"""
-        info = self._trader.query_order(self._account, order_id)
+        if hasattr(self._trader, "query_order"):
+            info = self._trader.query_order(self._account, order_id)
+        else:
+            info = self._trader.query_stock_order(self._account, order_id)
         if not info:
             return OrderStatus.PENDING
         xt_status = info.get("order_status") if isinstance(info, dict) else None
@@ -177,3 +180,14 @@ def _xt_order_to_fill(order: dict) -> dict:
         "order_status": order.get("order_status"),
         "stock": order.get("stock_code"),
     }
+
+
+def _make_stock_account(trader: Any, account_id: str) -> Any:
+    """Build the xtquant account object without assuming deprecated helpers."""
+    if hasattr(trader, "get_stock_account"):
+        return trader.get_stock_account(account_id)
+    try:
+        from xtquant import xttype  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover - environment specific
+        raise RuntimeError("xtquant.xttype unavailable for StockAccount") from exc
+    return xttype.StockAccount(account_id)

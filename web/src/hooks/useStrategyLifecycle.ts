@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { StrategyLifecycleEntry } from "@/types/research";
-import { mockStrategyLifecycle } from "@/lib/mock/strategy_lifecycle";
+import { apiGet } from "@/lib/api/client";
 
 export function useStrategyLifecycle() {
   return useQuery<StrategyLifecycleEntry[]>({
     queryKey: ["strategy-lifecycle"],
-    queryFn: () => mockStrategyLifecycle(),
+    queryFn: () => apiGet<StrategyLifecycleEntry[]>("/api/strategy-lifecycle"),
     staleTime: Infinity,
   });
 }

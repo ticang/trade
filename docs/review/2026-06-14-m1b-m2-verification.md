@@ -7,9 +7,11 @@
 
 ## 0. 关键约束（诚实声明）
 
-**xtquant 是 Windows-only**（随 QMT 终端分发，macOS pip 不可装）。本机 macOS 无法运行真实 xtquant/QMT。故：
+**xtquant 是 Windows/QMT 客户端通道**（依赖本机 QMT 投研版或极简版服务）。当前已在 Windows 环境安装 `xtquant` Python 包并完成 import/API 签名检查；真实 live 探测仍依赖 QMT 客户端服务在线。
+
 - **代码层全做**：QmtGateway/QmtBroker 适配器（xtquant lazy import）+ 全部周边可移植机制 + mock 单测
-- **live xtquant 验证须 Windows + QMT 客户端登录态**（用提供的 QMT 账户/密码登录客户端后，本代码即可连）
+- **Windows 包验证已推进**：`xtquant`、`xtdata`、`xttrader` import 通过，`subscribe_quote`、`get_market_data_ex`、`XtQuantTrader` 签名已检查
+- **live xtquant 只读验证已通过**：QMT 客户端在线后，只读行情读取与 trader 只读握手均 PASS；未触发下单/撤单
 
 ## 1. 测试证据
 
@@ -17,6 +19,9 @@
 |---|---|
 | 后端 `pytest tests/ -m "not slow and not network"` | **449 passed, 1 xfailed, 6 deselected** |
 | M-1b/M2 验收（mock） | 10/10 绿，确定性（seed=2024） |
+| Windows QMT 安全 probe 单测 | **5 passed** |
+| Windows QMT live probe | **pass**：Python 包可导入，行情只读读取 PASS，trader 只读握手 PASS |
+| QMT/M2 mock + adapter 回归 | **39 passed** |
 
 ---
 
@@ -50,19 +55,37 @@
 
 ---
 
-## 3. Windows live 验证清单（待用户在 Windows + QMT 执行）
+## 3. Windows live 验证清单
 
-下列项本机仅 mock，真实值须 Windows 实测：
+已新增安全探测入口：
+
+```powershell
+.venv\Scripts\python.exe -m probes.qmt_live
+```
+
+该入口只做只读行情和只读 trader 握手，不调用下单/撤单 API，不输出密码/token。当前阶段结果：
+
+1. `xtquant_import=PASS`
+2. `market_data_read=PASS`
+3. `trader_readonly_handshake=PASS`
+
+同步修正：
+
+- `QmtBroker` 真实环境使用 `xttype.StockAccount(account_id)` 构造账户对象，不再依赖 fake 测试里的 `get_stock_account`。
+- `QmtBroker.status()` 兼容真实 `query_stock_order(account, order_id)`。
+- 真实只读 smoke：broker 构造、账户查询、持仓查询均未抛异常；不调用 `order_stock` 或撤单 API。
+
+下列项仍需 QMT 客户端在线后继续实测：
 1. xtquant 订阅频率/回调线程时序（ThreadBridge 已就位，验真实回调线程）
 2. 真实下单延迟绝对值（mock 下 <100ms，live 阈值实测）
 3. xttrader 断线指数退避重连（当前靠析构+新建实例；可补显式 reconnect API）
 4. xt API 签名回归（order_stock/cancel_order_stock 字段名，真实样本校验）
 5. 连续 20 交易日实盘对账差异 <0.1%（§11 M2 真值）
 
-**操作**：Windows 装 QMT 终端 → 用 QMT 账户/密码登录 → `.env` 配置 → `python -m pytest tests/quant/test_m1b_m2_acceptance.py`（移除 mock，接真实 xtquant）→ 跑 live。
+**操作**：Windows 打开并登录 QMT 终端 → `.env` 配置必要 QMT 路径与账户标识 → 先运行只读 probe → 再运行 `python -m pytest tests/quant/test_m1b_m2_acceptance.py`（移除 mock，接真实 xtquant）→ 跑 live。
 
 ---
 
 ## 4. 结论
 
-**M-1b/M2 代码层全部完成并通过 mock 验收**（449 测试绿）：行情网关（PIT/线程桥/去重/背压/QmtGateway）+ 执行层（Broker/状态机/订单簿/SimBrokerLive/QmtBroker per-account）+ 对账 + DuckDB 交接 + M-1b 探测 mock + M2 闭环 mock。**live xtquant 验证待 Windows + QMT 登录态**（清单见 §3）。至此 M0→M1.5+M3+M-1b/M2 的本地可建部分全部就位，系统具备在 Windows 上接 QMT 跑模拟盘的完整代码基础。
+**M-1b/M2 代码层全部完成并通过 mock 验收**：行情网关（PIT/线程桥/去重/背压/QmtGateway）+ 执行层（Broker/状态机/订单簿/SimBrokerLive/QmtBroker per-account）+ 对账 + DuckDB 交接 + M-1b 探测 mock + M2 闭环 mock。Windows 阶段已确认 `xtquant` Python 包、核心模块、只读行情读取、trader 只读握手与 broker 只读查询路径可用。仍未做真实下单/撤单/断线恢复/连续 20 交易日模拟盘验证；这些必须在模拟盘计划下单独执行。

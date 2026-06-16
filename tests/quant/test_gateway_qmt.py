@@ -6,12 +6,14 @@ xtquant.xtdata / xtquant.xttrader 模块来模拟 xtquant 行为。
 """
 import sys
 import types
+import builtins
 from datetime import datetime
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 
+import quant.gateway.qmt as qmt_module
 from quant.gateway.qmt import QmtGateway, _try_import_xtquant
 from quant.gateway.thread_bridge import ThreadBridge
 
@@ -103,10 +105,7 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
 
 def test_qmt_unavailable_raises(monkeypatch):
     """xtquant 缺失（_try_import_xtquant 返回 None）→ 构造抛 RuntimeError。"""
-    # 清掉可能存在的 xtquant 模块，强制 import 失败
-    for name in list(sys.modules):
-        if name == "xtquant" or name.startswith("xtquant."):
-            monkeypatch.setitem(sys.modules, name, None)
+    monkeypatch.setattr(qmt_module, "_try_import_xtquant", lambda: None)
 
     bridge = ThreadBridge()
     with pytest.raises(RuntimeError, match="Windows-only"):
@@ -115,9 +114,14 @@ def test_qmt_unavailable_raises(monkeypatch):
 
 def test_try_import_xtquant_returns_none_when_missing(monkeypatch):
     """_try_import_xtquant 在 xtquant 不可用时返回 None。"""
-    for name in list(sys.modules):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
         if name == "xtquant" or name.startswith("xtquant."):
-            monkeypatch.setitem(sys.modules, name, None)
+            raise ModuleNotFoundError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
     assert _try_import_xtquant() is None
 
 
