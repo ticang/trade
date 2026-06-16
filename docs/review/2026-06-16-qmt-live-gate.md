@@ -9,7 +9,7 @@
 ## 环境
 
 - `QMT_USERDATA_PATH`: `D:\迅投极速交易终端 睿智融科版\userdata_mini`
-- `QMT_ACCOUNT`: 已由用户提供，记录脱敏为 `********2764`
+- `QMT_ACCOUNT`: 已由用户提供并先后测试两个资金账号，记录脱敏为 `********2764`、`***0707`
 - 探测标的：`600519.SH`
 
 ## 结果
@@ -25,7 +25,7 @@
 | 持仓查询 | PASS | `positions=PASS count=0` |
 | 当日委托查询 | PASS | `orders=PASS count=0` |
 | 当日成交查询 | PASS | `trades=PASS count=0` |
-| 资产查询 | BLOCKED | 接口不报错，但返回空对象：`asset=PASS empty` / `broker_account=PASS empty`，不能作为资金账户已完整可读的证据 |
+| 资产查询 | BLOCKED | 两个资金账号接口均不报错，但返回空对象：`asset=PASS empty` / `broker_account=PASS empty`，不能作为资金账户已完整可读的证据 |
 | 实时订阅 API | PARTIAL | `subscribe_quote=PASS`、`unsubscribe_quote=PASS` |
 | 实时订阅回调 | BLOCKED | 20 秒、带 `xtdata.run()` 30 秒两次探测均 `callback_received=BLOCKED count=0` |
 | full tick 快照 | BLOCKED | `get_full_tick=PASS keys=0`，未返回标的实时 tick |
@@ -38,14 +38,14 @@
 
 - 本机 QMT/xtquant 安装与本地行情服务可用。
 - 只读历史/分钟行情可读。
-- trader 对指定账号可构造并查询持仓、委托、成交列表。
+- trader 对两个指定账号均可构造并查询持仓、委托、成交列表。
 - 项目 QMT 适配层测试通过。
 
 不可放行：
 
 - M4 影子模式/小资金实盘仍不可放行。
 - 真实下单、撤单、下单延迟、撤单延迟、断线恢复、真实成交回报对账仍未验证。
-- 资产查询返回空对象，不能证明资金账户资产侧已完整可读。
+- 两个资金账号均复现资产查询返回空对象，不能证明资金账户资产侧已完整可读。
 - 实时订阅未收到回调，不能证明 QMT 回调线程桥接满足实盘策略驱动要求。
 
 ## 下一步
