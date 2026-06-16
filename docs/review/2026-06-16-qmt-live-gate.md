@@ -26,8 +26,8 @@
 | 当日委托查询 | PASS | `orders=PASS count=0` |
 | 当日成交查询 | PASS | `trades=PASS count=0` |
 | 资产查询 | PASS | 使用交易侧 `userdata` 路径后返回 `XtAsset` 对象 |
-| 实时订阅 API | PARTIAL | `subscribe_quote=PASS`、`unsubscribe_quote=PASS` |
-| 实时订阅回调 | BLOCKED | 20 秒、带 `xtdata.run()` 30 秒两次探测均 `callback_received=BLOCKED count=0` |
+| 实时订阅 API | PARTIAL | 代码层已修正：周期订阅逐标的调用 `subscribe_quote(stock_code, ...)`；tick 实时订阅优先 `subscribe_whole_quote(code_list, ...)`；启动 `xtdata.run()` 后台循环 |
+| 实时订阅回调 | BLOCKED | 代码层兼容真实回调形态 `{stock: [data, ...]}` 与 `{stock: data}`；现场 QMT 复测 `subscribe_quote`、`subscribe_whole_quote`、项目 `QmtGateway` tick 订阅 60 秒均未收到回调 |
 | full tick 快照 | BLOCKED | `get_full_tick=PASS keys=0`，未返回标的实时 tick |
 | 分钟行情读取 | PASS | `get_market_data_ex_1m=PASS keys=1` |
 | 模拟盘下单/撤单 | PASS | `600000.SH` 100 股、限价 1.00 买入委托两次均返回正订单号；撤单返回 0；订单列表最终 `order_status=54`、`traded_volume=0`；成交列表匹配数 0 |
@@ -47,10 +47,10 @@
 
 - M4 影子模式/小资金实盘仍不可放行。
 - 真实资金下单、撤单、下单延迟、撤单延迟、断线恢复、真实成交回报对账仍未验证。
-- 实时订阅未收到回调，不能证明 QMT 回调线程桥接满足实盘策略驱动要求。
+- 现场实时订阅仍未收到回调，不能证明当前 QMT 终端/行情权限满足实盘策略驱动要求。
 
 ## 下一步
 
-1. 在交易时段确认行情订阅权限/全推权限，复跑 `subscribe_quote` 回调探测。
+1. 在 QMT 客户端确认实时行情/全推权限与 Python 回调开关，复跑 `subscribe_quote`、`subscribe_whole_quote` 与项目 `QmtGateway` tick 回调探测。
 2. 复测断线恢复：交易侧 `userdata` 路径重连、订单列表回放、重复 `client_order_id` 防重。
 3. 只有实时回调和断线恢复通过后，才进入真实资金下单/撤单门禁；真实交易动作必须由用户明确授权，并指定账号、标的、数量、价格和撤单策略。

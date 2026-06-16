@@ -32,7 +32,9 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
     """
     state: dict = {
         "subscribe_calls": [],
+        "whole_quote_calls": [],
         "history_calls": [],
+        "run_called": False,
         "trader_instances": [],
         "last_callback": None,
         "market_data_df": market_data_df if market_data_df is not None else pd.DataFrame(),
@@ -41,9 +43,9 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
     # ---- fake xtdata ----
     xtdata = types.ModuleType("xtquant.xtdata")
 
-    def subscribe_quote(symbols, period="", callback=None, **kwargs):
+    def subscribe_quote(stock_code, period="", callback=None, **kwargs):
         state["subscribe_calls"].append({
-            "symbols": list(symbols),
+            "stock_code": stock_code,
             "period": period,
             "callback": callback,
             "kwargs": kwargs,
@@ -52,6 +54,19 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
         if captured is not None:
             captured["last_callback"] = callback
         return 0
+
+    def subscribe_whole_quote(code_list, callback=None):
+        state["whole_quote_calls"].append({
+            "code_list": list(code_list),
+            "callback": callback,
+        })
+        state["last_callback"] = callback
+        if captured is not None:
+            captured["last_callback"] = callback
+        return 100
+
+    def run():
+        state["run_called"] = True
 
     def get_market_data_ex(period="", start_time="", end_time="", **kwargs):
         state["history_calls"].append({
@@ -63,7 +78,9 @@ def _install_fake_xtquant(monkeypatch, *, connect_return: int = 0,
         return state["market_data_df"]
 
     xtdata.subscribe_quote = subscribe_quote  # type: ignore[attr-defined]
+    xtdata.subscribe_whole_quote = subscribe_whole_quote  # type: ignore[attr-defined]
     xtdata.get_market_data_ex = get_market_data_ex  # type: ignore[attr-defined]
+    xtdata.run = run  # type: ignore[attr-defined]
 
     # ---- fake xttrader ----
     xttrader = types.ModuleType("xtquant.xttrader")
@@ -154,9 +171,41 @@ def test_subscribe_calls_xtdata(monkeypatch):
 
     assert len(state["subscribe_calls"]) == 1
     call = state["subscribe_calls"][0]
-    assert call["symbols"] == ["600519"]
+    assert call["stock_code"] == "600519"
     assert call["period"] == "1d"
     assert callable(call["callback"])
+    assert state["run_called"] is True
+
+
+def test_subscribe_calls_xtdata_once_per_symbol(monkeypatch):
+    """真实 xtdata.subscribe_quote 接收单个 stock_code，多标的需逐个订阅。"""
+    state = _install_fake_xtquant(monkeypatch)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    gw.subscribe(["600519.SH", "000001.SZ"], "1m", MagicMock())
+
+    assert [c["stock_code"] for c in state["subscribe_calls"]] == [
+        "600519.SH",
+        "000001.SZ",
+    ]
+
+
+def test_tick_subscribe_prefers_whole_quote(monkeypatch):
+    """tick 实时订阅优先使用 subscribe_whole_quote 以获取全推回调。"""
+    state = _install_fake_xtquant(monkeypatch)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    gw.subscribe(["600519.SH", "000001.SZ"], "tick", MagicMock())
+
+    assert state["whole_quote_calls"] == [
+        {
+            "code_list": ["600519.SH", "000001.SZ"],
+            "callback": state["last_callback"],
+        }
+    ]
+    assert state["subscribe_calls"] == []
 
 
 # ---------------- 4. 内部线程回调 → bridge → on_bar ----------------
@@ -217,6 +266,34 @@ def test_subscribe_callback_reaches_on_bar_via_real_bridge(monkeypatch):
     assert args[0] is on_bar
     bar = args[1]
     assert bar["symbol"] == "600519"
+    assert bar["close"] == 10.0
+
+
+def test_subscribe_callback_handles_xtdata_batched_shape(monkeypatch):
+    """真实 subscribe_quote 回调形态为 {stock: [data, ...]}，应展开后桥接。"""
+    state = _install_fake_xtquant(monkeypatch)
+    mock_bridge = MagicMock(spec=ThreadBridge)
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=mock_bridge)
+    gw.subscribe(["600519.SH"], "tick", MagicMock())
+
+    state["last_callback"]({
+        "600519.SH": [
+            {
+                "time": 1710489600000,
+                "lastPrice": 10.0,
+                "open": 9.8,
+                "high": 10.2,
+                "low": 9.7,
+                "volume": 100000,
+                "amount": 1000000.0,
+            }
+        ]
+    })
+
+    mock_bridge.bridge.assert_called_once()
+    bar = mock_bridge.bridge.call_args[0][0]
+    assert bar["symbol"] == "600519.SH"
+    assert bar["freq"] == "tick"
     assert bar["close"] == 10.0
 
 

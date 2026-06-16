@@ -5,6 +5,8 @@ xtquant 仅在 Windows + QMT 终端环境下可装；macOS/Linux 无该包。
 xtquant 内部线程回调经 ThreadBridge 桥接到 asyncio loop（§3.1 数据流）。
 """
 from datetime import datetime, timezone
+import threading
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -70,6 +72,8 @@ class QmtGateway:
         self._trader.connect()
         # 已订阅 (symbol, freq) 集合，防重复订阅
         self._subscribed: set[tuple[str, str]] = set()
+        self._run_thread: threading.Thread | None = None
+        self._subscription_ids: dict[tuple[str, str], int] = {}
 
     # ---------------- 实时订阅 ----------------
 
@@ -89,15 +93,90 @@ class QmtGateway:
 
         def _on_xt_callback(data: dict) -> None:
             # 内部线程上下文：构造 bar 后跨线程投递到 loop
-            bar = self._build_bar_from_xtdata(data, symbols, freq)
-            if bar is not None:
+            for bar in self._bars_from_xt_callback(data, symbols, freq):
                 self._bridge.bridge(bar)
 
-        self._xtdata.subscribe_quote(
-            symbols, period=period, callback=_on_xt_callback
-        )
+        self._ensure_xtdata_run_loop()
+        if freq == "tick" and hasattr(self._xtdata, "subscribe_whole_quote"):
+            pending = [s for s in symbols if (s, freq) not in self._subscribed]
+            if pending:
+                seq = self._xtdata.subscribe_whole_quote(pending, _on_xt_callback)
+                for s in pending:
+                    self._subscription_ids[(s, freq)] = seq
+                    self._subscribed.add((s, freq))
+            return
+
         for s in symbols:
+            if (s, freq) in self._subscribed:
+                continue
+            seq = self._xtdata.subscribe_quote(
+                s, period=period, callback=_on_xt_callback
+            )
+            self._subscription_ids[(s, freq)] = seq
             self._subscribed.add((s, freq))
+
+    def _ensure_xtdata_run_loop(self) -> None:
+        """Start xtdata.run() once so subscribe callbacks can be dispatched."""
+        if self._run_thread is not None:
+            return
+        run = getattr(self._xtdata, "run", None)
+        if not callable(run):
+            return
+
+        def _run() -> None:
+            try:
+                run()
+            except Exception:
+                # Connection loss is handled by higher-level gateway supervision.
+                return
+
+        self._run_thread = threading.Thread(
+            target=_run,
+            name="qmt-xtdata-run",
+            daemon=True,
+        )
+        self._run_thread.start()
+
+    @classmethod
+    def _bars_from_xt_callback(
+        cls,
+        data: dict,
+        symbols: list[str],
+        freq: str,
+    ) -> Iterable[dict]:
+        """Normalize xtdata callback shapes into bar dictionaries."""
+        if not isinstance(data, dict):
+            return []
+        if cls._looks_like_single_tick(data):
+            bar = cls._build_bar_from_xtdata(data, symbols, freq)
+            return [bar] if bar is not None else []
+
+        bars: list[dict] = []
+        for symbol, items in data.items():
+            if isinstance(items, dict):
+                iterable: Iterable[Any] = [items]
+            elif isinstance(items, list):
+                iterable = items
+            else:
+                continue
+            for item in iterable:
+                if not isinstance(item, dict):
+                    continue
+                payload = dict(item)
+                payload.setdefault("stock", symbol)
+                bar = cls._build_bar_from_xtdata(payload, symbols, freq)
+                if bar is not None:
+                    bars.append(bar)
+        return bars
+
+    @staticmethod
+    def _looks_like_single_tick(data: dict) -> bool:
+        return "time" in data and (
+            "stock" in data
+            or "close" in data
+            or "lastPrice" in data
+            or "last_price" in data
+        )
 
     @staticmethod
     def _build_bar_from_xtdata(
@@ -110,7 +189,11 @@ class QmtGateway:
         """
         if not isinstance(data, dict):
             return None
-        symbol = data.get("stock") or (symbols[0] if symbols else "")
+        symbol = (
+            data.get("stock")
+            or data.get("stock_code")
+            or (symbols[0] if symbols else "")
+        )
         ts_field = data.get("time")
         if ts_field is None:
             return None
@@ -124,7 +207,9 @@ class QmtGateway:
             "open": float(data.get("open", 0.0)),
             "high": float(data.get("high", 0.0)),
             "low": float(data.get("low", 0.0)),
-            "close": float(data.get("close", 0.0)),
+            "close": float(
+                data.get("close", data.get("lastPrice", data.get("last_price", 0.0)))
+            ),
             "volume": float(data.get("volume", 0.0)),
             "amount": float(data.get("amount", 0.0)),
             "available_at": ts,
@@ -201,6 +286,12 @@ class QmtGateway:
 
     def close(self) -> None:
         """停止 trader，释放连接。"""
+        for seq in self._subscription_ids.values():
+            try:
+                self._xtdata.unsubscribe_quote(seq)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        self._subscription_ids.clear()
         try:
             self._trader.stop()  # type: ignore[attr-defined]
         except AttributeError:
