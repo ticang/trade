@@ -5,7 +5,8 @@ xtquant 在 macOS 不可装。QmtBroker 顶层不 import xtquant；构造时 laz
 xtquant.xtdata 来模拟 xtquant 行为，覆盖：
 - xtquant 不可用 → RuntimeError
 - per-account 构造（trader.start/connect/get_stock_account）
-- place 调 order_stock，参数含 account/symbol/volume/price/client_order_id
+- place 调 order_stock，参数对齐当前 xtquant 签名：
+  account/stock_code/order_type/order_volume/price_type/price/strategy_name/order_remark
 - client_order_id 去重（DuplicateOrderError）
 - cancel 调 cancel_order_stock
 - status 状态映射（xt ORDER_JT/部分成交 → OrderStatus）
@@ -60,10 +61,12 @@ def _install_fake_xtquant(monkeypatch, *, query_order_return=None) -> dict:
                 "order_status": 56,  # xt ORDER_JT 已报
             }
             self.query_order = MagicMock(return_value=order_ret)
+            self.query_stock_orders = MagicMock(return_value=[])
             self.order_stock = MagicMock(return_value=100)  # 返回 seq
             self.cancel_order_stock = MagicMock(return_value=0)
             self.query_stock_positions = MagicMock(return_value=[])
             self.query_stock_asset = MagicMock(return_value={})
+            self.subscribe = MagicMock(return_value=0)
             self.register_callback = MagicMock(return_value=0)
             state["trader_instances"].append(self)
 
@@ -115,6 +118,7 @@ def test_construct_per_account(monkeypatch):
     trader.start.assert_called_once()
     trader.connect.assert_called_once()
     trader.get_stock_account.assert_called_once_with("acct1")
+    trader.subscribe.assert_called_once_with({"account_id": "fake_acct"})
     assert broker.account_id == "acct1"
     assert broker.is_synchronous is False
 
@@ -139,10 +143,12 @@ def test_construct_per_account_with_real_xttype_stock_account(monkeypatch):
             self.start = MagicMock(return_value=0)
             self.connect = MagicMock(return_value=0)
             self.query_stock_order = MagicMock(return_value={"order_status": 56})
+            self.query_stock_orders = MagicMock(return_value=[])
             self.order_stock = MagicMock(return_value=100)
             self.cancel_order_stock = MagicMock(return_value=0)
             self.query_stock_positions = MagicMock(return_value=[])
             self.query_stock_asset = MagicMock(return_value={})
+            self.subscribe = MagicMock(return_value=0)
             state["trader_instances"].append(self)
 
     xttrader.XtQuantTrader = _FakeXtQuantTrader  # type: ignore[attr-defined]
@@ -168,7 +174,7 @@ def test_construct_per_account_with_real_xttype_stock_account(monkeypatch):
 # ---------------- 3. place 调 order_stock ----------------
 
 def test_place_calls_order_stock(monkeypatch):
-    """place(order, "c1") → order_stock 被调，参数含 account/symbol/volume/price/client_order_id。"""
+    """place(order, "c1") → order_stock 参数对齐真实 xtquant 签名。"""
     state = _install_fake_xtquant(monkeypatch)
     bridge = ThreadBridge()
 
@@ -183,9 +189,15 @@ def test_place_calls_order_stock(monkeypatch):
 
     trader.order_stock.assert_called_once()
     args, kwargs = trader.order_stock.call_args
-    # 第一个位置参数应为账户对象（来自 get_stock_account）
-    assert kwargs.get("account") is not None or args[0] is not None
-    assert kwargs.get("stock_code") == "600519" or "600519" in (args if args else ())
+    assert not args
+    assert kwargs["account"] == {"account_id": "fake_acct"}
+    assert kwargs["stock_code"] == "600519"
+    assert kwargs["order_type"] == 23  # xtconstant.STOCK_BUY
+    assert kwargs["order_volume"] == 100
+    assert kwargs["price_type"] == 11  # xtconstant.FIX_PRICE
+    assert kwargs["price"] == 10.0
+    assert kwargs["strategy_name"] == ""
+    assert kwargs["order_remark"] == "c1"
     assert seq == 999
 
 
@@ -272,6 +284,71 @@ def test_status_uses_query_stock_order_when_query_order_is_absent(monkeypatch):
             self.start = MagicMock(return_value=0)
             self.connect = MagicMock(return_value=0)
             self.query_stock_order = MagicMock(return_value={"order_status": 55})
+            self.query_stock_orders = MagicMock(return_value=[])
+            self.order_stock = MagicMock(return_value=100)
+            self.cancel_order_stock = MagicMock(return_value=0)
+            self.query_stock_positions = MagicMock(return_value=[])
+            self.query_stock_asset = MagicMock(return_value={})
+            self.subscribe = MagicMock(return_value=0)
+            state["trader_instances"].append(self)
+
+    xttrader.XtQuantTrader = _FakeXtQuantTrader  # type: ignore[attr-defined]
+    xttype.StockAccount = _FakeStockAccount  # type: ignore[attr-defined]
+    xtquant_pkg = types.ModuleType("xtquant")
+    xtquant_pkg.xtdata = xtdata  # type: ignore[attr-defined]
+    xtquant_pkg.xttrader = xttrader  # type: ignore[attr-defined]
+    xtquant_pkg.xttype = xttype  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "xtquant", xtquant_pkg)
+    monkeypatch.setitem(sys.modules, "xtquant.xtdata", xtdata)
+    monkeypatch.setitem(sys.modules, "xtquant.xttrader", xttrader)
+    monkeypatch.setitem(sys.modules, "xtquant.xttype", xttype)
+
+    from quant.execution.qmt_broker import QmtBroker
+
+    broker = QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
+
+    assert broker.status("order_42") == OrderStatus.FILLED
+    state["trader_instances"][0].query_stock_order.assert_called_once()
+
+
+def test_status_maps_real_xt_order_object(monkeypatch):
+    """真实 query_stock_order 返回对象时，也按 order_status 映射。"""
+    order_obj = types.SimpleNamespace(order_status=54)
+    state = _install_fake_xtquant(monkeypatch, query_order_return=order_obj)
+
+    from quant.execution.qmt_broker import QmtBroker
+
+    broker = QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
+
+    assert broker.status("order_42") == OrderStatus.CANCELLED
+    state["trader_instances"][0].query_order.assert_called_once()
+
+
+def test_status_falls_back_to_query_stock_orders(monkeypatch):
+    """模拟盘 query_stock_order 为空时，从订单列表按 order_id 回退查状态。"""
+    state: dict = {"trader_instances": [], "accounts": []}
+    xtdata = types.ModuleType("xtquant.xtdata")
+    xttrader = types.ModuleType("xtquant.xttrader")
+    xttype = types.ModuleType("xtquant.xttype")
+
+    class _FakeStockAccount:
+        def __init__(self, account_id, account_type="STOCK"):
+            self.account_id = account_id
+            self.account_type = account_type
+            state["accounts"].append(self)
+
+    class _FakeXtQuantTrader:
+        def __init__(self, path, session_id):
+            self.start = MagicMock(return_value=0)
+            self.connect = MagicMock(return_value=0)
+            self.subscribe = MagicMock(return_value=0)
+            self.query_stock_order = MagicMock(return_value=None)
+            self.query_stock_orders = MagicMock(
+                return_value=[
+                    types.SimpleNamespace(order_id=100, order_status=56),
+                    types.SimpleNamespace(order_id=135266305, order_status=54),
+                ]
+            )
             self.order_stock = MagicMock(return_value=100)
             self.cancel_order_stock = MagicMock(return_value=0)
             self.query_stock_positions = MagicMock(return_value=[])
@@ -293,8 +370,43 @@ def test_status_uses_query_stock_order_when_query_order_is_absent(monkeypatch):
 
     broker = QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
 
-    assert broker.status("order_42") == OrderStatus.FILLED
-    state["trader_instances"][0].query_stock_order.assert_called_once()
+    assert broker.status(135266305) == OrderStatus.CANCELLED
+
+
+def test_construct_raises_when_connect_fails(monkeypatch):
+    """交易侧 connect 返回非 0 时，不允许构造出假可用 Broker。"""
+    _install_fake_xtquant(monkeypatch)
+    from quant.execution.qmt_broker import QmtBroker
+    # 通过替换 fake 类实例的 connect 返回较麻烦，改用安装后 monkeypatch 构造类。
+    import xtquant.xttrader as xttrader
+
+    class _ConnectFailTrader(xttrader.XtQuantTrader):
+        def __init__(self, path, session_id):
+            super().__init__(path, session_id)
+            self.connect = MagicMock(return_value=-1)
+
+    xttrader.XtQuantTrader = _ConnectFailTrader
+    with pytest.raises(RuntimeError, match="connect failed"):
+        QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
+
+
+def test_construct_raises_when_subscribe_fails(monkeypatch):
+    """账号 subscribe 返回非 0 时，不允许进入下单路径。"""
+    import sys
+
+    _install_fake_xtquant(monkeypatch)
+    from quant.execution.qmt_broker import QmtBroker
+
+    xttrader = sys.modules["xtquant.xttrader"]
+
+    class _SubscribeFailTrader(xttrader.XtQuantTrader):
+        def __init__(self, path, session_id):
+            super().__init__(path, session_id)
+            self.subscribe = MagicMock(return_value=-1)
+
+    xttrader.XtQuantTrader = _SubscribeFailTrader
+    with pytest.raises(RuntimeError, match="account subscribe failed"):
+        QmtBroker(account_id="acct1", path="/tmp/qmt", session_id=1, bridge=ThreadBridge())
 
 
 # ---------------- 7. positions / account 查询 ----------------

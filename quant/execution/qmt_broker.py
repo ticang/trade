@@ -38,6 +38,7 @@ _XT_STATUS_MAP: dict[int, OrderStatus] = {
     49: OrderStatus.PENDING,
     50: OrderStatus.PARTIAL_FILLED,
     53: OrderStatus.CANCELLED,
+    54: OrderStatus.CANCELLED,
     55: OrderStatus.FILLED,
     56: OrderStatus.SUBMITTED,
     57: OrderStatus.CANCELLED,
@@ -45,11 +46,17 @@ _XT_STATUS_MAP: dict[int, OrderStatus] = {
     60: OrderStatus.REJECTED,
 }
 
+# xtconstant values used by current xtquant:
+# STOCK_BUY=23, STOCK_SELL=24, FIX_PRICE=11.
+_XT_STOCK_BUY = 23
+_XT_STOCK_SELL = 24
+_XT_FIX_PRICE = 11
 
-# Order.side/order_type → xt order_type 常量（0 买/1 卖；1 限价/5 市价 等本地差异）
+
+# Order.side → xt stock operation type.
 def _side_to_xt(side: str) -> int:
-    """Order.side → xttrader order_type 买卖方向（0 买 / 1 卖）。"""
-    return 0 if side == "buy" else 1
+    """Order.side → xttrader stock operation type."""
+    return _XT_STOCK_BUY if side == "buy" else _XT_STOCK_SELL
 
 
 class QmtBroker:
@@ -79,8 +86,16 @@ class QmtBroker:
         self._bridge = bridge
         self._trader = self._xttrader.XtQuantTrader(path, session_id)
         self._trader.start()
-        self._trader.connect()
+        connect_result = self._trader.connect()
+        if isinstance(connect_result, int) and connect_result != 0:
+            raise RuntimeError(f"xtquant trader connect failed: {connect_result}")
         self._account = _make_stock_account(self._trader, account_id)
+        if hasattr(self._trader, "subscribe"):
+            subscribe_result = self._trader.subscribe(self._account)
+            if isinstance(subscribe_result, int) and subscribe_result != 0:
+                raise RuntimeError(
+                    f"xtquant account subscribe failed: {subscribe_result}"
+                )
         # per-instance client_order_id 去重集（§4.6.2 断线重连防重复）
         self._client_ids: set[str] = set()
         # on_fill 异步回调（经 bridge 从内部线程桥接）
@@ -137,10 +152,11 @@ class QmtBroker:
             account=self._account,
             stock_code=order.symbol,
             order_type=order_type,
-            volume=order.qty,
+            order_volume=order.qty,
+            price_type=_XT_FIX_PRICE,
             price=price,
-            strategy="",
-            user_order_id=client_order_id,
+            strategy_name="",
+            order_remark=client_order_id,
         )
         return seq
 
@@ -155,9 +171,32 @@ class QmtBroker:
         else:
             info = self._trader.query_stock_order(self._account, order_id)
         if not info:
+            info = self._find_order_in_list(order_id)
+        if not info:
             return OrderStatus.PENDING
-        xt_status = info.get("order_status") if isinstance(info, dict) else None
+        if isinstance(info, dict):
+            xt_status = info.get("order_status")
+        else:
+            xt_status = getattr(info, "order_status", None)
         return _XT_STATUS_MAP.get(xt_status, OrderStatus.PENDING)
+
+    def _find_order_in_list(self, order_id: str) -> Any | None:
+        """Fallback for QMT variants where query_stock_order misses recent orders."""
+        if not hasattr(self._trader, "query_stock_orders"):
+            return None
+        try:
+            orders = self._trader.query_stock_orders(self._account, False) or []
+        except Exception:
+            return None
+        expected = str(order_id)
+        for order in orders:
+            current = (
+                order.get("order_id") if isinstance(order, dict)
+                else getattr(order, "order_id", None)
+            )
+            if str(current) == expected:
+                return order
+        return None
 
     def positions(self) -> list:
         """查询持仓快照：xttrader.query_stock_positions。"""
