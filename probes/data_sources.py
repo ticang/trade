@@ -6,7 +6,12 @@ import pandas as pd
 
 
 def fetch_akshare_daily(
-    symbol: str, start: date, end: date, *, retries: int = 3
+    symbol: str,
+    start: date,
+    end: date,
+    *,
+    retries: int = 3,
+    timeout: float = 10.0,
 ) -> pd.DataFrame:
     import akshare as ak
 
@@ -19,6 +24,7 @@ def fetch_akshare_daily(
                 start_date=start.strftime("%Y%m%d"),
                 end_date=end.strftime("%Y%m%d"),
                 adjust="",
+                timeout=timeout,
             )
             break
         except Exception as exc:

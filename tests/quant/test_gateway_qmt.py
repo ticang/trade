@@ -374,6 +374,64 @@ def test_poll_fallback_uses_market_data_when_full_tick_empty(monkeypatch):
     assert bar["close"] == 10.0
 
 
+def test_qmt_health_passes_when_full_tick_available(monkeypatch):
+    """full tick 有数据时，QMT 可作为实时行情源。"""
+    full_tick = {
+        "600519.SH": {
+            "time": 1710489600000,
+            "lastPrice": 10.0,
+            "open": 9.8,
+            "high": 10.2,
+            "low": 9.7,
+            "volume": 100000,
+            "amount": 1000000.0,
+        }
+    }
+    _install_fake_xtquant(monkeypatch, full_tick=full_tick)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    health = gw.health(["600519.SH"], "tick")
+
+    assert health.status == "PASS"
+    assert health.quality == "REALTIME"
+    assert "full_tick" in health.reason
+
+
+def test_qmt_health_degrades_when_only_recent_bar_available(monkeypatch):
+    """tick 空但最近 1m bar 可用时，只能作为降级行情源。"""
+    raw_df = pd.DataFrame({
+        "time": [1710489600000],
+        "open": [9.8],
+        "high": [10.2],
+        "low": [9.7],
+        "close": [10.0],
+        "volume": [100000],
+        "amount": [1000000.0],
+    })
+    _install_fake_xtquant(monkeypatch, market_data_df=raw_df)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    health = gw.health(["600519.SH"], "tick")
+
+    assert health.status == "DEGRADED"
+    assert health.quality == "DELAYED"
+
+
+def test_qmt_health_blocks_when_realtime_and_recent_bar_empty(monkeypatch):
+    """现场卡点：58610 可连接但 tick/最近 bar 都空，必须明确 BLOCKED。"""
+    _install_fake_xtquant(monkeypatch)
+    bridge = ThreadBridge()
+    gw = QmtGateway(path="/tmp/qmt", session_id=1, bridge=bridge)
+
+    health = gw.health(["600519.SH"], "tick")
+
+    assert health.status == "BLOCKED"
+    assert health.quality == "UNAVAILABLE"
+    assert "empty" in health.reason
+
+
 # ---------------- 5. history 返回 DataFrame（带 available_at） ----------------
 
 def test_history_returns_dataframe(monkeypatch):

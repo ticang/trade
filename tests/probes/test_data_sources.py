@@ -19,6 +19,7 @@ def test_akshare_daily_retries_transient_disconnect(monkeypatch):
 
     def stock_zh_a_hist(**kwargs):
         calls["count"] += 1
+        calls["last_timeout"] = kwargs.get("timeout")
         if calls["count"] == 1:
             raise ConnectionError("transient disconnect")
         return pd.DataFrame(
@@ -45,11 +46,13 @@ def test_akshare_daily_retries_transient_disconnect(monkeypatch):
         start=date(2024, 3, 1),
         end=date(2024, 3, 7),
         retries=2,
+        timeout=1.5,
     )
 
     assert calls["count"] == 2
     assert list(df.columns) == ["trade_date", "open", "high", "low", "close", "volume"]
     assert df.iloc[0]["close"] == 10.5
+    assert calls["last_timeout"] == 1.5
 
 
 @pytest.mark.network

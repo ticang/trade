@@ -52,6 +52,7 @@ def run_readonly_probe(
     checks = {
         "xtquant_import": False,
         "market_data_read": False,
+        "market_data_health": False,
         "trader_readonly_handshake": False,
     }
 
@@ -82,6 +83,12 @@ def run_readonly_probe(
             reason=f"market data read failed: {type(exc).__name__}: {exc}",
             checks=checks,
         )
+
+    checks["market_data_health"] = _market_data_health(
+        xtdata,
+        config.symbol,
+        config.userdata_path,
+    )
 
     if not config.userdata_path:
         return QmtLiveProbeResult(
@@ -118,6 +125,40 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _market_data_health(xtdata, symbol: str, userdata_path: str | None) -> bool:  # noqa: ANN001
+    get_full_tick = getattr(xtdata, "get_full_tick", None)
+    if callable(get_full_tick):
+        try:
+            tick = get_full_tick([symbol]) or {}
+            if isinstance(tick, dict) and tick:
+                return True
+        except Exception:
+            pass
+
+    kwargs = {
+        "field_list": ["open", "high", "low", "close", "volume", "amount"],
+        "stock_list": [symbol],
+        "period": "1m",
+        "count": 1,
+        "dividend_type": "none",
+        "fill_data": True,
+    }
+    if userdata_path:
+        kwargs["data_dir"] = str(os.path.join(userdata_path, "datadir"))
+    try:
+        data = xtdata.get_market_data_ex(**kwargs)
+    except Exception:
+        return False
+    if data is None:
+        return False
+    if isinstance(data, dict):
+        value = data.get(symbol)
+        if value is None:
+            return False
+        return len(value) > 0 if hasattr(value, "__len__") else True
+    return len(data) > 0 if hasattr(data, "__len__") else True
 
 
 def main() -> None:

@@ -11,11 +11,12 @@ interface TradePanelProps {
   symbol: string;
   accountId?: string;
   onSubmit: (order: { side: OrderSide; price: number; qty: number }) => void;
+  submitDisabledReason?: string;
 }
 
 const num = (v: number) => Math.round(v).toLocaleString();
 
-export function TradePanel({ symbol, accountId = "acct1", onSubmit }: TradePanelProps) {
+export function TradePanel({ symbol, accountId = "acct-a", onSubmit, submitDisabledReason }: TradePanelProps) {
   const kline = useKline(symbol);
   const accounts = useAccount();
   const acct = accounts.data?.find((a) => a.account_id === accountId);
@@ -33,7 +34,12 @@ export function TradePanel({ symbol, accountId = "acct1", onSubmit }: TradePanel
           {kline.data && <KlineChart bars={kline.data} />}
         </div>
         <div className="lg:col-span-1">
-          <OrderForm symbol={symbol} available={acct?.available ?? 0} onSubmit={onSubmit} />
+          <OrderForm
+            symbol={symbol}
+            available={acct?.available ?? 0}
+            onSubmit={onSubmit}
+            disabledReason={submitDisabledReason}
+          />
         </div>
       </div>
     </div>

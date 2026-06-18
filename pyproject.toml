@@ -24,6 +24,10 @@ dependencies = [
 nlp = ["torch>=2.2", "transformers>=4.40"]
 qmt = ["xtquant>=250516.1.1"]
 
+[project.scripts]
+trade-full-gate = "probes.full_gate:main"
+trade-paper-run = "quant.runtime.paper:main"
+
 [tool.setuptools.packages.find]
 include = ["quant*", "probes*"]
 

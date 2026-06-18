@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from quant.gateway.base import GatewayHealth
 from quant.gateway.thread_bridge import ThreadBridge
 
 __all__ = ["QmtGateway", "_try_import_xtquant"]
@@ -196,15 +197,78 @@ class QmtGateway:
             for bar in self._poll_market_data(symbol, "tick"):
                 self._bridge_polled_bar(bar)
 
+    def health(self, symbols: list[str], freq: str) -> GatewayHealth:
+        """Return QMT market-data health for the requested symbols/freq.
+
+        QMT subscribe APIs may return a task id even when MiniQuote never pushes
+        data. Treat a nonempty tick snapshot as realtime PASS, a nonempty recent
+        minute bar as DEGRADED, and empty data as BLOCKED.
+        """
+        checked_at = datetime.now()
+        if not symbols:
+            return GatewayHealth(
+                status="BLOCKED",
+                source="qmt",
+                quality="UNAVAILABLE",
+                reason="no symbols requested",
+                checked_at=checked_at,
+            )
+
+        if freq == "tick":
+            tick_data = self._read_full_tick(symbols)
+            if tick_data:
+                return GatewayHealth(
+                    status="PASS",
+                    source="qmt",
+                    quality="REALTIME",
+                    reason="get_full_tick returned data",
+                    checked_at=checked_at,
+                )
+            if any(self._has_recent_market_data(symbol, "tick") for symbol in symbols):
+                return GatewayHealth(
+                    status="DEGRADED",
+                    source="qmt",
+                    quality="DELAYED",
+                    reason="full tick empty; recent 1m bar is available",
+                    checked_at=checked_at,
+                )
+            return GatewayHealth(
+                status="BLOCKED",
+                source="qmt",
+                quality="UNAVAILABLE",
+                reason="full tick and recent 1m bar are empty",
+                checked_at=checked_at,
+            )
+
+        if any(self._has_recent_market_data(symbol, freq) for symbol in symbols):
+            return GatewayHealth(
+                status="PASS",
+                source="qmt",
+                quality="HISTORICAL" if freq == "1d" else "DELAYED",
+                reason="recent market_data_ex bar is available",
+                checked_at=checked_at,
+            )
+        return GatewayHealth(
+            status="BLOCKED",
+            source="qmt",
+            quality="UNAVAILABLE",
+            reason="market_data_ex returned no recent rows",
+            checked_at=checked_at,
+        )
+
     def _poll_full_tick(self, symbols: list[str]) -> Iterable[dict]:
+        data = self._read_full_tick(symbols)
+        return self._bars_from_xt_callback(data, symbols, "tick")
+
+    def _read_full_tick(self, symbols: list[str]) -> dict:
         get_full_tick = getattr(self._xtdata, "get_full_tick", None)
         if not callable(get_full_tick):
-            return []
+            return {}
         try:
             data = get_full_tick(symbols) or {}
         except Exception:
-            return []
-        return self._bars_from_xt_callback(data, symbols, "tick")
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def _poll_market_data(self, symbol: str, freq: str) -> Iterable[dict]:
         period = "1m" if freq == "tick" else _FREQ_TO_PERIOD.get(freq, freq)
@@ -226,6 +290,23 @@ class QmtGateway:
         row = df.iloc[-1].to_dict()
         row.setdefault("stock", symbol)
         return self._bars_from_xt_callback(row, [symbol], freq)
+
+    def _has_recent_market_data(self, symbol: str, freq: str) -> bool:
+        period = "1m" if freq == "tick" else _FREQ_TO_PERIOD.get(freq, freq)
+        try:
+            data = self._xtdata.get_market_data_ex(
+                field_list=["open", "high", "low", "close", "volume", "amount"],
+                stock_list=[symbol],
+                period=period,
+                count=1,
+                dividend_type="none",
+                fill_data=True,
+                data_dir=self._data_dir,
+            )
+        except Exception:
+            return False
+        df = _extract_symbol_frame(data, symbol)
+        return df is not None and len(df) > 0
 
     def _bridge_polled_bar(self, bar: dict) -> None:
         key = (str(bar["symbol"]), str(bar["freq"]))

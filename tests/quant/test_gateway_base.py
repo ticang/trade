@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 
 from quant.events import BarEvent
-from quant.gateway.base import MarketDataGateway
+from quant.gateway.base import GatewayHealth, HealthCheckedMarketDataGateway, MarketDataGateway
 from quant.gateway.thread_bridge import ThreadBridge
 
 
@@ -36,6 +36,21 @@ def test_protocol_structure():
     assert "as_of" in sig_hist.parameters
     sig_bar_at = inspect.signature(MarketDataGateway.bar_at)
     assert "decision_time" in sig_bar_at.parameters
+
+
+def test_health_checked_protocol_structure():
+    assert hasattr(HealthCheckedMarketDataGateway, "health")
+    sig = inspect.signature(HealthCheckedMarketDataGateway.health)
+    assert "symbols" in sig.parameters
+    assert "freq" in sig.parameters
+    health = GatewayHealth(
+        status="BLOCKED",
+        source="fake",
+        quality="UNAVAILABLE",
+        reason="empty",
+        checked_at=datetime(2024, 1, 1),
+    )
+    assert health.status == "BLOCKED"
 
 
 # ---------------- PIT 安全：bar_at ----------------

@@ -108,7 +108,21 @@ class LLMClient:
             max_tokens=max_tokens,
             **kw,
         )
-        return resp.choices[0].message.content
+        for retry_tokens in (max(max_tokens * 4, 256), max(max_tokens * 8, 512)):
+            choice = resp.choices[0]
+            content = choice.message.content or ""
+            if content:
+                return content
+            if getattr(choice, "finish_reason", None) != "length":
+                return content
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=retry_tokens,
+                **kw,
+            )
+        return resp.choices[0].message.content or ""
 
     def complete_json(self, messages: list[dict], **kw) -> dict:
         """complete 后解析 JSON。容错：提取首个完整 JSON 值并归一为 dict。

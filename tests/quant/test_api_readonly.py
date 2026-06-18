@@ -11,30 +11,34 @@ if loaded_quant is not None and "tests" in str(getattr(loaded_quant, "__file__",
     sys.modules.pop("quant", None)
 
 from quant.api.app import create_app
+from quant.runtime.paper import run_paper_session
 
 
-def test_readonly_api_serves_monitor_trade_research_contracts():
+def test_readonly_api_serves_runtime_state_contracts(tmp_path, monkeypatch):
+    state_path = tmp_path / "latest_state.json"
+    run_paper_session(n_days=20, n_symbols=5, accounts=["acct-a"], state_path=state_path)
+    monkeypatch.setenv("TRADE_RUNTIME_STATE", str(state_path))
     client = TestClient(create_app())
 
     markets = client.get("/api/markets")
     assert markets.status_code == 200
-    assert markets.json()[0] == {
-        "symbol": "000001",
-        "name": "平安银行",
-        "last": 11.34,
-        "change": 0.89,
-        "volume": 234_000_000,
-    }
+    assert set(markets.json()[0]) == {"symbol", "name", "last", "change", "volume"}
 
-    kline = client.get("/api/kline/600519")
+    symbol = markets.json()[0]["symbol"]
+    kline = client.get(f"/api/kline/{symbol}")
     assert kline.status_code == 200
     first_bar = kline.json()[0]
     assert set(first_bar) == {"ts", "open", "high", "low", "close", "volume"}
-    assert len(kline.json()) == 240
+    assert len(kline.json()) == 20
 
-    sentiment = client.get("/api/sentiment/600519")
+    sentiment = client.get(f"/api/sentiment/{symbol}")
     assert sentiment.status_code == 200
     assert set(sentiment.json()[0]) == {"ts", "score"}
+
+    signals = client.get(f"/api/signals/{symbol}")
+    assert signals.status_code == 200
+    if signals.json():
+        assert set(signals.json()[0]) == {"ts", "direction", "label", "price"}
 
     for path in [
         "/api/account",
@@ -53,10 +57,22 @@ def test_readonly_api_serves_monitor_trade_research_contracts():
         assert resp.json()
 
 
-def test_readonly_api_rejects_symbols_outside_current_main_board_scope():
+def test_readonly_api_rejects_symbols_outside_current_runtime_state(tmp_path, monkeypatch):
+    state_path = tmp_path / "latest_state.json"
+    run_paper_session(n_days=20, n_symbols=5, accounts=["acct-a"], state_path=state_path)
+    monkeypatch.setenv("TRADE_RUNTIME_STATE", str(state_path))
     client = TestClient(create_app())
 
     resp = client.get("/api/kline/688981")
 
     assert resp.status_code == 404
-    assert resp.json()["detail"] == "symbol outside current main-board scope"
+
+
+def test_readonly_api_returns_503_when_runtime_state_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADE_RUNTIME_STATE", str(tmp_path / "missing.json"))
+    client = TestClient(create_app())
+
+    resp = client.get("/api/markets")
+
+    assert resp.status_code == 503
+    assert "run trade-paper-run first" in resp.json()["detail"]

@@ -24,3 +24,7 @@ web/tsconfig.tsbuildinfo
 !.env.example
 config/secrets.*
 
+# 本地运行态输出
+var/runtime/*.json
+var/runtime/*.log
+

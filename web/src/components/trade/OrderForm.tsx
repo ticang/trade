@@ -9,11 +9,12 @@ interface OrderFormProps {
   symbol: string;
   available: number;
   onSubmit: (order: { side: OrderSide; price: number; qty: number }) => void;
+  disabledReason?: string;
 }
 
 const QUICK_PCT = [25, 50, 75, 100];
 
-export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
+export function OrderForm({ symbol, available, onSubmit, disabledReason }: OrderFormProps) {
   const [side, setSide] = useState<OrderSide>("buy");
   const [price, setPrice] = useState<number>(0);
   const [qty, setQty] = useState<number>(0);
@@ -26,7 +27,7 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
   };
 
   const submit = () => {
-    if (!(price > 0) || !(qty > 0)) return;
+    if (disabledReason || !(price > 0) || !(qty > 0)) return;
     onSubmit({ side, price, qty });
   };
 
@@ -118,9 +119,12 @@ export function OrderForm({ symbol, available, onSubmit }: OrderFormProps) {
         variant={side === "buy" ? "trading-up" : "trading-down"}
         onClick={submit}
         className="w-full"
+        disabled={Boolean(disabledReason)}
+        title={disabledReason}
       >
         {side === "buy" ? "买入" : "卖出"}
       </Button>
+      {disabledReason ? <div className="text-caption text-muted">{disabledReason}</div> : null}
     </div>
   );
 }

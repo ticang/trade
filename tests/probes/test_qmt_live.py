@@ -73,6 +73,7 @@ def test_probe_does_not_call_order_stock() -> None:
     assert result.status == "pass"
     assert result.checks["xtquant_import"] is True
     assert result.checks["market_data_read"] is True
+    assert result.checks["market_data_health"] is False
     assert result.checks["trader_readonly_handshake"] is True
     assert "order_stock" not in calls
 
@@ -109,6 +110,7 @@ def test_probe_uses_query_account_infos_when_get_stock_account_is_absent() -> No
     )
 
     assert result.status == "pass"
+    assert result.checks["market_data_health"] is False
     assert result.checks["trader_readonly_handshake"] is True
     assert "query_account_infos" in calls
 
@@ -125,5 +127,72 @@ def test_probe_blocks_trader_handshake_without_userdata_path() -> None:
     assert result.status == "blocked"
     assert result.checks["xtquant_import"] is True
     assert result.checks["market_data_read"] is True
+    assert result.checks["market_data_health"] is False
     assert result.checks["trader_readonly_handshake"] is False
     assert "QMT_USERDATA_PATH" in result.reason
+
+
+def test_probe_market_data_health_passes_when_full_tick_available() -> None:
+    class FakeTrader:
+        def __init__(self, path: str, session: int):
+            pass
+
+        def start(self) -> int:
+            return 0
+
+        def connect(self) -> int:
+            return 0
+
+        def get_stock_account(self, account_id: str) -> dict:
+            return {"account_id": account_id}
+
+    xtdata = types.SimpleNamespace(
+        get_market_data_ex=lambda **kwargs: {"600519.SH": []},
+        get_full_tick=lambda symbols: {"600519.SH": {"lastPrice": 10.0}},
+    )
+    xttrader = types.SimpleNamespace(XtQuantTrader=FakeTrader)
+
+    result = run_readonly_probe(
+        QmtLiveProbeConfig(
+            account_id="acct1",
+            userdata_path=r"C:\qmt\userdata_mini",
+            symbol="600519.SH",
+        ),
+        importer=lambda: (xtdata, xttrader),
+    )
+
+    assert result.status == "pass"
+    assert result.checks["market_data_health"] is True
+
+
+def test_probe_market_data_health_blocks_when_tick_and_recent_bar_empty() -> None:
+    class FakeTrader:
+        def __init__(self, path: str, session: int):
+            pass
+
+        def start(self) -> int:
+            return 0
+
+        def connect(self) -> int:
+            return 0
+
+        def get_stock_account(self, account_id: str) -> dict:
+            return {"account_id": account_id}
+
+    xtdata = types.SimpleNamespace(
+        get_market_data_ex=lambda **kwargs: {"600519.SH": []},
+        get_full_tick=lambda symbols: {},
+    )
+    xttrader = types.SimpleNamespace(XtQuantTrader=FakeTrader)
+
+    result = run_readonly_probe(
+        QmtLiveProbeConfig(
+            account_id="acct1",
+            userdata_path=r"C:\qmt\userdata_mini",
+            symbol="600519.SH",
+        ),
+        importer=lambda: (xtdata, xttrader),
+    )
+
+    assert result.status == "pass"
+    assert result.checks["market_data_health"] is False

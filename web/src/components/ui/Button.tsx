@@ -21,7 +21,11 @@ const VARIANT_CLASSES: Record<Variant, string> = {
 
 export function Button({ variant = "primary", className, disabled, children, ...rest }: ButtonProps) {
   const isPrimary = variant === "primary" || variant === "primary-pill";
-  const disabledOverride = disabled && isPrimary ? "bg-primary-disabled text-muted cursor-not-allowed" : "";
+  const disabledOverride = disabled
+    ? isPrimary
+      ? "bg-primary-disabled text-muted cursor-not-allowed"
+      : "opacity-50 cursor-not-allowed"
+    : "";
   return (
     <button
       disabled={disabled}

@@ -4,13 +4,13 @@ import { KlineChart } from "@/components/charts/KlineChart";
 import { SentimentChart } from "@/components/charts/SentimentChart";
 import { useKline } from "@/hooks/useKline";
 import { useSentiment } from "@/hooks/useSentiment";
-import { mockSignals } from "@/lib/mock/signals";
+import { useSignals } from "@/hooks/useSignals";
 import { QueryState } from "@/components/ui/QueryState";
 
 export function ReplayReport({ symbol }: { symbol: string }) {
   const kline = useKline(symbol);
   const sentiment = useSentiment(symbol);
-  const signals = mockSignals();
+  const signals = useSignals(symbol);
 
   return (
     <div className="space-y-lg">
@@ -25,7 +25,7 @@ export function ReplayReport({ symbol }: { symbol: string }) {
         <div className="p-lg">
           <div className="text-caption text-muted mb-sm">价格走势 + 成交量 + 信号标注</div>
           <QueryState label="K 线" isLoading={kline.isLoading} isError={kline.isError} isEmpty={!kline.isLoading && !kline.isError && (kline.data?.length ?? 0) === 0} error={kline.error} />
-          {kline.data && <KlineChart bars={kline.data} signals={signals} />}
+          {kline.data && <KlineChart bars={kline.data} signals={signals.data ?? []} />}
         </div>
       </Card>
 
@@ -40,8 +40,9 @@ export function ReplayReport({ symbol }: { symbol: string }) {
       <Card variant="surface-dark">
         <div className="p-lg">
           <div className="text-caption text-muted mb-md">信号清单</div>
+          <QueryState label="信号" isLoading={signals.isLoading} isError={signals.isError} isEmpty={!signals.isLoading && !signals.isError && (signals.data?.length ?? 0) === 0} error={signals.error} />
           <div className="space-y-sm">
-            {signals.map((s) => (
+            {(signals.data ?? []).map((s) => (
               <div key={s.ts} className="flex justify-between text-body-md border-b border-hairline-ondark pb-sm">
                 <span className="text-on-dark">{s.label}</span>
                 <span

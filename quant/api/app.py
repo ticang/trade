@@ -3,7 +3,11 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from quant.api import sample_data
+from quant.api.runtime_state import (
+    RuntimeStateUnavailable,
+    get_collection,
+    get_symbol_collection,
+)
 
 
 def create_app() -> FastAPI:
@@ -22,63 +26,83 @@ def create_app() -> FastAPI:
 
     @app.get("/api/markets")
     def get_markets() -> list[dict]:
-        return sample_data.markets()
+        return _read_collection("markets")
 
     @app.get("/api/kline/{symbol}")
     def get_kline(symbol: str) -> list[dict]:
         try:
-            return sample_data.kline(symbol)
+            return get_symbol_collection("kline", symbol)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeStateUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/sentiment/{symbol}")
     def get_sentiment(symbol: str) -> list[dict]:
         try:
-            return sample_data.sentiment(symbol)
+            return get_symbol_collection("sentiment", symbol)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeStateUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/signals/{symbol}")
+    def get_signals(symbol: str) -> list[dict]:
+        try:
+            return get_symbol_collection("signals", symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeStateUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/api/account")
     def get_account() -> list[dict]:
-        return sample_data.account()
+        return _read_collection("account")
 
     @app.get("/api/positions")
     def get_positions() -> list[dict]:
-        return sample_data.positions()
+        return _read_collection("positions")
 
     @app.get("/api/orders")
     def get_orders() -> list[dict]:
-        return sample_data.orders()
+        return _read_collection("orders")
 
     @app.get("/api/fills")
     def get_fills() -> list[dict]:
-        return sample_data.fills()
+        return _read_collection("fills")
 
     @app.get("/api/risk")
     def get_risk() -> dict:
-        return sample_data.risk()
+        return _read_collection("risk")
 
     @app.get("/api/alerts")
     def get_alerts() -> list[dict]:
-        return sample_data.alerts()
+        return _read_collection("alerts")
 
     @app.get("/api/strategies")
     def get_strategies() -> list[dict]:
-        return sample_data.strategies()
+        return _read_collection("strategies")
 
     @app.get("/api/factor-eval")
     def get_factor_eval() -> list[dict]:
-        return sample_data.factor_eval()
+        return _read_collection("factor_eval")
 
     @app.get("/api/backtest")
     def get_backtest() -> dict:
-        return sample_data.backtest()
+        return _read_collection("backtest")
 
     @app.get("/api/strategy-lifecycle")
     def get_strategy_lifecycle() -> list[dict]:
-        return sample_data.strategy_lifecycle()
+        return _read_collection("strategy_lifecycle")
 
     return app
 
 
 app = create_app()
+
+
+def _read_collection(name: str):
+    try:
+        return get_collection(name)
+    except RuntimeStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

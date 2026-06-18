@@ -579,3 +579,139 @@ MarketDataGateway/mock bars → FactorRegistry → StrategyRunner → SimBrokerL
 - `.venv\Scripts\python.exe -m pytest tests\quant\test_m1b_m2_acceptance.py tests\quant\test_execution_sim_live.py tests\quant\test_execution_reconcile.py tests\quant\test_strategy_runner.py tests\quant\test_m2_20day_paper_acceptance.py -q` → 33 passed。
 - `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` → 648 passed, 4 deselected, 21 warnings。
 - `git diff --check` → passed。
+
+---
+
+## QMT/MiniQMT 行情服务启动模式排障计划（进行中）
+
+### 目标
+解决现场 MiniQuote Python API `58610` 能连接但无有效 tick/分钟 bar、60 秒内不推 Python 回调的问题。成功标准：`get_full_tick(["600000.SH"])` 返回有效数据，或 `get_market_data_ex(..., period="1m")` 返回非空 DataFrame，并且 `subscribe_quote`/`subscribe_whole_quote` 至少一个能在 60 秒内推送 Python 回调或项目侧轮询能桥接 bar。
+
+### 任务清单
+- [x] 复现当前状态：记录 `58610` 的 `get_full_tick`、`get_market_data_ex("1m")`、订阅 60 秒回调结果。
+- [x] 分层抓证据：记录 QMT/MiniQMT 进程、端口、`linkQmt`、`userdata`/`userdata_mini` 日志差异。
+- [x] 对比可用链路：确认主终端已有行情 push 与 MiniQuote Python API 空数据之间的断点。
+- [x] 尝试最小启动模式修复：优先使用 QMT 自带启动入口/哨兵，不手写账号密码，不改动交易配置。
+- [x] 复测项目门禁：运行 QMT live 探测、QMT 组合测试、后端非 network 回归。
+- [x] 更新 `docs/review/2026-06-16-qmt-live-gate.md` 与本节 Review，记录放行/阻断结论。
+
+### Review
+**阶段结果（2026-06-16 14:52）**：
+- 已确认本机“同时在线数超出限制”的直接诱因：主 QMT、MiniQMT/MiniQuote/MiniBroker 曾同时残留。清理重复进程并等待后，重新启动主终端，主终端可生成 `bin.x64\linkQmt` 并拉起 `miniquote.exe "linkMiniQuoteHide"`。
+- 当前保留的有效入口：主终端 `XtItClient.exe` 在线，监听 `58600`；主终端拉起的 `miniquote.exe` 监听 `58341`/`58610`。`58600` 不是 xtdata 行情接口，调用 `getFullTick`/`subscribeQuote` 返回 `ErrorID=200005 未找到处理函数`；`58610` 是 xtdata 行情接口。
+- `58610` 连接成功，`get_data_dir()` 指向 QMT `userdata_mini\datadir`；但 `get_full_tick(["600000.SH","000001.SZ","510300.SH"])` 返回 `{}`，`subscribe_quote("600000.SH", period="tick")` 10 秒超时，`subscribe_whole_quote(["SH","SZ"])` 可返回任务号但 60 秒无回调。
+- MiniQuote 上游 TCP 已建立到多个行情服务器，说明不是本机端口未启动或防火墙完全断链；但 `xtquoterconfig.xml` 中普通行情服务器 `username=""`，日志持续出现整市场 `No Data Push`/订阅超时，表现为行情权限/上游授权未向 MiniQuote 下发实时数据。
+- 主终端交易侧在线：日志持续有模拟资金/成交推送与查询成功；问题收敛在 MiniQuote 行情服务权限或 QMT 账号行情授权，而不是项目轮询 fallback 代码。
+
+**验证记录**：
+- `.venv\Scripts\python.exe` 连接 `127.0.0.1:58610` 成功；`subscribe_whole_quote(["SH","SZ"])` 任务号返回 `1/2`，等待 60 秒 `callback_count=0`。
+- `.venv\Scripts\python.exe` 连接 `127.0.0.1:58600` 成功但行情函数返回 `ErrorID=200005 未找到处理函数`，排除把主终端端口当作 xtdata 行情端口的方案。
+
+**未关闭项**：
+- 仍未达到成功标准：`get_full_tick` 非空或 60 秒内收到实时订阅回调。
+- 不再自动反复重启 QMT/MiniQMT，避免再次触发券商/迅投在线数门禁。下一步需要在 QMT 终端或券商侧确认该账号是否开通 MiniQMT/xtdata 实时行情权限，以及是否必须使用“主终端托管启动 MiniQMT/行情服务”的授权模式。
+
+---
+
+## QMT 方案重设计：交易与行情解耦（进行中）
+
+### 目标
+解决当前卡点：QMT 交易侧可用，但 MiniQuote `58610` 实时行情不推回调、`get_full_tick`/最近分钟 bar 为空。新方案不再把 QMT 实时行情作为唯一前置条件，而是将 QMT 定位为交易执行主通道，并把行情接入改为带健康检查、可降级、可阻断的多源接口。
+
+### 不变量
+- QMT 交易通道仍只使用终端登录态，不在代码中写入账号密码或 token。
+- 实盘下单门禁不能因行情降级而被弱化：若实时行情不是 QMT 或权威实时源，策略只能进入模拟/影子或人工确认模式。
+- 行情数据必须携带 `source`、`quality`、`available_at`，上层能区分实时、延迟、历史补齐和不可用。
+- QMT/MiniQMT 不再自动反复重启；在线数异常只做检测、提示和阻断。
+
+### 任务清单
+- [x] 设计新的行情健康契约：给网关补充 health/capability 语义，不破坏现有 `MarketDataGateway`。
+- [x] 实现多源行情仲裁层：优先 QMT 实时；若无 tick/bar，切到备用源或返回结构化 `DEGRADED/BLOCKED`。
+- [x] 将 QMT 交易与 QMT 行情从门禁上拆开：交易只依赖 `QmtBroker`，策略 live 依赖行情健康。
+- [x] 增加测试：QMT 实时空数据时不再假装成功；能触发降级/阻断；交易侧只读仍可通过。
+- [x] 更新 QMT live 门禁文档，明确新放行规则和当前现场状态。
+- [x] 增加备用快照行情源：支持延迟/缓存行情作为 `DEGRADED` 源接入多源仲裁。
+- [x] 接入具体备用数据源：先接 AkShare 日线快照，喂给 `SnapshotMarketDataGateway`，并标明历史/延迟属性。
+- [x] 升级现场 probe：输出 `market_data_health`，将交易只读握手与实时行情健康拆开判定。
+- [ ] 接入真正盘中备用实时源：券商 L1/L2、Wind/Choice/米筐等，必须能提供实时 tick/分钟 bar 后才可作为 `PASS/REALTIME`。
+- [x] 修复 LLM network smoke：reasoning 模型小 `max_tokens` 时空 content/length 截断会自动用更大 token 预算重试一次。
+- [x] 单独复测 network 门禁：LLM/NLP/BaoStock 通过；AkShare 当前被本机代理到东方财富链路阻断。
+- [x] 新增 network gate probe：必需外部项通过时整体 PASS，AkShare 备用日线源作为 optional BLOCKED 单独报告。
+- [x] 新增 project gate probe：统一汇总 QMT 交易握手、QMT 实时行情健康与必需外部网络项，给出项目级 PASS/BLOCKED。
+- [x] 新增执行层 live readiness 门禁：自动 live 必须同时满足行情 `PASS/REALTIME` 与 broker 只读账户检查；延迟/历史/未知健康源只能用于影子或模拟。
+- [x] 新增 full gate probe：一条命令串联 probes/quant 非 network 回归、`git diff --check` 与项目级 QMT/network 门禁。
+- [x] 增加 full gate console 入口与 README 运行说明：`python -m probes.full_gate` 与 `.venv\Scripts\trade-full-gate.exe` 均可作为门禁入口。
+- [x] 抽出正式 paper runtime：`quant.runtime.paper` + `.venv\Scripts\trade-paper-run.exe`，可直接运行 20 日双账户模拟盘闭环并输出 JSON 摘要。
+
+### Review
+**阶段结果（2026-06-16）**：
+- `quant.gateway.base` 新增 `GatewayHealth` 与 `HealthCheckedMarketDataGateway`，作为 `MarketDataGateway` 的加法扩展，不破坏既有 `subscribe/history/bar_at` 调用方。
+- `QmtGateway.health(symbols, freq)` 将现场卡点显式建模：tick 快照非空才是 `PASS/REALTIME`；tick 空但最近 1m bar 非空是 `DEGRADED/DELAYED`；两者都空是 `BLOCKED/UNAVAILABLE`。
+- 新增 `FailoverMarketDataGateway`：多源行情按 `PASS -> DEGRADED -> BLOCKED` 仲裁；全部不可用时抛 `MarketDataUnavailable`，避免把“订阅任务号返回”误判成实时行情可用。
+- 新增 `SnapshotMarketDataGateway`：接受标准 DataFrame（`symbol/freq/ts/close/volume/available_at`），作为延迟/缓存备用行情源。分钟/tick 健康状态为 `DEGRADED/DELAYED`，日线历史为 `PASS/HISTORICAL`，不会伪装成实时行情。
+- 新增 `AkShareDailySnapshotGateway`：复用 AkShare `stock_zh_a_hist` 日线 OHLCV，转换为标准快照列；支持 QMT 风格 `600519.SH` 与六位代码，内置 transient retry。该源只解决历史/盘后可用性，不替代实时行情权限。
+- `probes.qmt_live` 新增 `market_data_health` 检查。现场复测在交易侧 userdata 路径下结果为：`xtquant_import=PASS`、`market_data_read=PASS`、`trader_readonly_handshake=PASS`、`market_data_health=BLOCKED`。
+- `LLMClient.complete` 对 reasoning 模型增加空 content 重试：真实 `mimo-v2.5` 在小 `max_tokens` 时会把 token 用在 `reasoning_content` 并 `finish_reason=length`；现在最多两次提升 token 预算重试，真实 API smoke 已通过。
+- 新增 `probes.network_gate`：汇总 AkShare/BaoStock/LLM 外部健康。当前输出为整体 `PASS`；AkShare 因代理到东方财富失败为 optional `BLOCKED`，BaoStock 与 LLM 为 required `PASS`。
+- 新增 `quant.execution.live_readiness`：执行层硬挡板会拒绝 `DEGRADED/DELAYED`、`PASS/HISTORICAL`、无 `health()` 契约或 broker 只读检查失败的 live 入口。
+- 新增 `probes.project_gate`：项目级门禁会把 QMT 交易只读、QMT 实时行情健康、执行层 live readiness 和必需 network gate 合并判断。当前 expected 结论是 `BLOCKED`，因为 `qmt_market_data_health=BLOCKED` 且 `live_readiness=BLOCKED`；即使 network required 项通过，也不能放行盘中 live 策略。
+- 新增 `probes.full_gate`：统一回归门禁先跑本地 deterministic 回归，再跑项目级外部门禁；任一子命令超时会结构化返回 `BLOCKED` 而不是让门禁崩溃。当前真实输出为回归项全部 PASS，但整体 `BLOCKED`，原因是 project gate 阻断在 QMT 实时行情。
+- `pyproject.toml` 新增 `trade-full-gate = probes.full_gate:main` console script；README 已补 Windows/QMT 环境下运行 full gate 的命令、当前 BLOCKED 语义与外部阻断解释。
+- `pyproject.toml` 新增 `trade-paper-run = quant.runtime.paper:main` console script；README 已补 paper runtime 与 live runtime 当前状态。paper runtime 复用 `MomentumFactor -> StrategyRunner -> SimBrokerLive -> on_fill -> reconcile`，不是测试专用代码。
+- network 门禁拆分结论：BaoStock/NLP/LLM/agent 类测试可通过；AkShare 日线真实网络测试仍因代理 `127.0.0.1:7897` 到 `push2his.eastmoney.com` 断开失败。
+- 新架构边界：QMT 交易执行继续走 `QmtBroker`；策略 live 放行必须依赖行情健康。当前现场 QMT 行情会被判定为 BLOCKED，不能驱动实盘策略。
+
+**验证**：
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_llm_client.py -q -s` -> 19 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_llm_client.py -q` -> 20 passed。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_network_gate.py -q` -> 4 passed。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_project_gate.py -q` -> 4 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_live_readiness.py tests\probes\test_project_gate.py -q` -> 9 passed。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_full_gate.py tests\probes\test_project_gate.py tests\quant\test_live_readiness.py -q` -> 14 passed。
+- `.venv\Scripts\python.exe -m pip install -e . --index-url https://pypi.org/simple` -> installed trade-0.1.0 editable；`importlib.metadata` 可见 `trade-full-gate=probes.full_gate:main`；`.venv\Scripts\trade-full-gate.exe` 已生成。
+- `.venv\Scripts\python.exe -m pip install -e . --index-url https://pypi.org/simple` -> installed trade-0.1.0 editable；`importlib.metadata` 可见 `trade-paper-run=quant.runtime.paper:main`；`.venv\Scripts\trade-paper-run.exe` 已生成。
+- `.venv\Scripts\trade-paper-run.exe` -> JSON summary；mode=paper，days_run=20，account_count=2，total_fills=12，max_reconcile_diff=0.0。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_runtime_paper.py tests\quant\test_m2_20day_paper_acceptance.py tests\quant\test_execution_sim_live.py -q` -> 10 passed。
+- `.venv\Scripts\python.exe -m probes.network_gate` -> status=PASS；akshare_daily=BLOCKED(optional)，baostock_daily=PASS(required)，llm_api=PASS(required)。
+- `$env:QMT_USERDATA_PATH='...\userdata'; $env:QMT_ACCOUNT='***0707'; .venv\Scripts\python.exe -m probes.project_gate` -> status=BLOCKED；qmt_trader=PASS；qmt_market_data_health=BLOCKED；baostock_daily/llm_api required PASS；akshare_daily optional BLOCKED。
+- `$env:QMT_USERDATA_PATH='...\userdata'; $env:QMT_ACCOUNT='***0707'; .venv\Scripts\python.exe -m probes.project_gate` -> status=BLOCKED；新增 `live_readiness=BLOCKED`，原因是 live trading requires PASS/REALTIME market data。
+- `$env:QMT_USERDATA_PATH='...\userdata'; $env:QMT_ACCOUNT='***0707'; .venv\Scripts\python.exe -m probes.full_gate` -> exit 1；probes_non_network=PASS（28 passed, 3 deselected, 1 xfailed）；quant_non_network=PASS（681 passed, 4 deselected, 21 warnings）；git_diff_check=PASS；project_gate=BLOCKED（qmt_market_data_health/live_readiness BLOCKED）。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_actor_ai_induct.py -m network -q -s` -> 1 passed, 5 deselected。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_data_sources.py::test_baostock_daily_has_required_fields tests\probes\test_nlp_sentiment.py::test_bullish_scores_higher_than_bearish -q -s` -> 2 passed, 1 warning。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_llm_client.py::test_complete_real_api -q -s` -> 1 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_m5b_acceptance.py::test_m5b_ai_induct_real_llm_network tests\quant\test_mining_agent.py::test_real_llm_run tests\quant\test_actor_ai_induct.py::test_real_llm_induct -q -s` -> 3 passed。
+- `.venv\Scripts\python.exe -m pytest tests -m network -q` -> 超时；拆分后定位 AkShare 真实网络项失败，其他 network 门禁通过。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_qmt_live.py -q` -> 7 passed。
+- `.venv\Scripts\python.exe -m pytest tests\probes\test_qmt_live.py tests\quant\test_gateway_akshare_snapshot.py tests\quant\test_gateway_snapshot.py tests\quant\test_gateway_failover.py tests\quant\test_gateway_qmt.py tests\quant\test_gateway_base.py -q` -> 44 passed。
+- `$env:QMT_USERDATA_PATH='...\userdata'; $env:QMT_ACCOUNT='***0707'; .venv\Scripts\python.exe -m probes.qmt_live` -> trader readonly PASS，market_data_health BLOCKED。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_gateway_akshare_snapshot.py tests\quant\test_gateway_snapshot.py tests\quant\test_gateway_failover.py -q` -> 12 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_gateway_snapshot.py tests\quant\test_gateway_failover.py -q` -> 8 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_gateway_base.py tests\quant\test_gateway_failover.py tests\quant\test_gateway_snapshot.py tests\quant\test_gateway_qmt.py -q` -> 34 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_gateway_base.py tests\quant\test_gateway_failover.py tests\quant\test_gateway_qmt.py -q` -> 29 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_execution_qmt_broker.py tests\quant\test_gateway_qmt.py tests\quant\test_gateway_failover.py tests\quant\test_gateway_base.py tests\quant\test_m1b_m2_acceptance.py tests\probes\test_qmt_live.py -q` -> 63 passed。
+- `.venv\Scripts\python.exe -m pytest tests\quant\test_execution_qmt_broker.py tests\quant\test_gateway_qmt.py tests\quant\test_gateway_failover.py tests\quant\test_gateway_snapshot.py tests\quant\test_gateway_akshare_snapshot.py tests\quant\test_gateway_base.py tests\quant\test_m1b_m2_acceptance.py tests\probes\test_qmt_live.py -q` -> 71 passed。
+- 早期回归记录：`.venv\Scripts\python.exe -m pytest tests\probes -m "not network" -q` -> 20 passed, 3 deselected, 1 xfailed。
+- 早期回归记录：`.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` -> 676 passed, 4 deselected, 21 warnings。
+- `.venv\Scripts\python.exe -m pytest tests\probes -m "not network" -q` -> 28 passed, 3 deselected, 1 xfailed。
+- `.venv\Scripts\python.exe -m pytest tests\quant -m "not network" -q` -> 681 passed, 4 deselected, 21 warnings。
+- `git diff --check` -> passed，仅 CRLF 换行提示。
+
+## 前后端运行态联通与去 mock 收尾（2026-06-17）
+
+### 任务清单
+- [x] 后端只读 API 完全切到 runtime state：删除 `quant.api.sample_data` 生产路径，运行态缺失时返回 503 并提示先运行 `trade-paper-run`。
+- [x] paper runtime 输出补齐前端所需 `signals` 集合；回放信号由成交记录派生，不再由前端 mock 生成。
+- [x] 前端回放页新增 `useSignals`，`/replay` 默认标的改为 runtime 存在的 `600000`。
+- [x] 交易页默认账户/标的对齐 runtime：`acct-a` + `600000`；委托/成交/持仓只展示后端 API 数据。
+- [x] 删除交易页本地假委托与“模拟下单”提示；下单按钮进入只读禁用态，避免把未提交订单显示成真实委托。
+- [x] 策略生命周期表改为 runtime state 只读展示，删除前端本地 mock 流转和本地审批/降级痕迹。
+- [x] 实际生成 `var/runtime/latest_state.json`，启动 FastAPI `127.0.0.1:8000` 与 Next `127.0.0.1:3000`，验证 `/api/health`、`/api/markets`、`/replay` 可访问。
+
+### Review
+- 当前除 QMT 实时行情/实盘自动交易门禁外，前端核心页面已从静态 sample/mock 迁到 runtime state：行情、K 线、情绪、回放信号、账户、持仓、委托、成交、风控、告警、策略、因子评价、回测、生命周期均经 FastAPI 提供。
+- `web/src/lib/mock/*` 仍保留为测试 fixture，不被生产页面直接引用。
+- 真实 broker POST 下单仍未开放：不是前端本地造单，而是等待 broker POST、风控、审计与 QMT live readiness 一起放行。
+- 验证：`.venv\Scripts\python.exe -m pytest tests\quant\test_api_readonly.py tests\quant\test_runtime_paper.py tests\quant\test_m2_20day_paper_acceptance.py -q` -> 6 passed。
+- 验证：`cd web; npm test -- --run` -> 13 files / 77 tests passed。
+- 验证：`cd web; npm run build` -> Next production build passed。
+- 运行烟雾：`.venv\Scripts\trade-paper-run.exe` 生成 20 日双账户 runtime state；`GET http://127.0.0.1:8000/api/health` -> ok；`GET /api/markets` -> 5 symbols，first=`600000`；`GET http://127.0.0.1:3000/replay` -> 200。

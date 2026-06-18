@@ -15,13 +15,14 @@ class _FakeMessage:
 
 
 class _FakeChoice:
-    def __init__(self, content):
+    def __init__(self, content, finish_reason="stop"):
         self.message = _FakeMessage(content)
+        self.finish_reason = finish_reason
 
 
 class _FakeResponse:
-    def __init__(self, content):
-        self.choices = [_FakeChoice(content)]
+    def __init__(self, content, finish_reason="stop"):
+        self.choices = [_FakeChoice(content, finish_reason=finish_reason)]
 
 
 class _FakeCompletions:
@@ -30,10 +31,24 @@ class _FakeCompletions:
     def __init__(self, content):
         self._content = content
         self.last_kwargs = None
+        self.calls = []
 
     def create(self, **kwargs):
         self.last_kwargs = kwargs
+        self.calls.append(kwargs)
         return _FakeResponse(self._content)
+
+
+class _FakeRetryCompletions:
+    def __init__(self, empty_attempts=1):
+        self.calls = []
+        self.empty_attempts = empty_attempts
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) <= self.empty_attempts:
+            return _FakeResponse("", finish_reason="length")
+        return _FakeResponse("连通", finish_reason="stop")
 
 
 class _FakeChat:
@@ -56,6 +71,20 @@ def _make_client_with_fake(content):
     c.model = "fake-model"
     c._client = _FakeOpenAI(content)
     return c
+
+
+def _make_client_with_retry_fake(empty_attempts=1):
+    c = LLMClient.__new__(LLMClient)
+    c.base_url = "http://fake"
+    c.api_key = "fake-key"
+    c.model = "fake-model"
+    fake = _FakeRetryCompletions(empty_attempts=empty_attempts)
+    c._client = type(
+        "_Client",
+        (),
+        {"chat": type("_Chat", (), {"completions": fake})()},
+    )()
+    return c, fake
 
 
 def test_complete_json_parses():
@@ -271,6 +300,29 @@ def test_complete_max_tokens_default_4096():
     c = _make_client_with_fake("ok")
     c.complete([{"role": "user", "content": "hi"}])
     assert c._client.chat.completions.last_kwargs["max_tokens"] == 4096
+
+
+def test_complete_retries_empty_length_response_with_larger_budget():
+    """reasoning 模型可能先耗尽思考 token；空 content + length 时重试一次。"""
+    c, fake = _make_client_with_retry_fake()
+
+    out = c.complete([{"role": "user", "content": "hi"}], max_tokens=16)
+
+    assert out == "连通"
+    assert len(fake.calls) == 2
+    assert fake.calls[0]["max_tokens"] == 16
+    assert fake.calls[1]["max_tokens"] >= 256
+
+
+def test_complete_retries_empty_length_response_twice():
+    c, fake = _make_client_with_retry_fake(empty_attempts=2)
+
+    out = c.complete([{"role": "user", "content": "hi"}], max_tokens=16)
+
+    assert out == "连通"
+    assert len(fake.calls) == 3
+    assert fake.calls[1]["max_tokens"] >= 256
+    assert fake.calls[2]["max_tokens"] >= 512
 
 
 def test_complete_json_max_tokens_default_4096():
